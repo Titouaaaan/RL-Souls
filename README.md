@@ -15,4 +15,4 @@ You might also need to download manually gymnasium and soulsgym. Make sure you h
 To activate the venv, simply go to the root directory and type `souls\Scripts\activate` in your terminal.
 
 # PROJECT DIARY
-https://docs.google.com/document/d/1M2HvsFlbMib0nFVNFCUXnuU_41kA6tJAe7srcPvQCS0/edit
+https://docs.google.com/document/d/1M2HvsFlbMib0nFVNFCUXnuU_41kA6tJAe7srcPvQCS0/edit?usp=sharing
