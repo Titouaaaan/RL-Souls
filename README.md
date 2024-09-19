@@ -1,4 +1,4 @@
-[Link Text](https://opencritic.com/game/1520/dark-souls-iii)
+![Dark Souls III](https://static.bandainamcoent.eu/high/dark-souls/dark-souls-3/00-page-setup/ds3_game-thumbnail.jpg)
 # RL-Souls
 The goal of this project is to use Reinforcement Learning algos to teach an agent how to play Souls games (FromSoftware) like Dark Souls III. 
 Different algorithms will be tested and fine tuned to figure out which methods works best.
