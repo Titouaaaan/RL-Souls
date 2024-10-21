@@ -7,12 +7,15 @@ I am working on this project during my gap year between my M1 and M2 at Sorbonne
 # Requirements and Virtual environment
 **This project is currently only available on Windows!**
 
-A virtual environment with all the requirements has been installed. In case there are any problems, the python version currently supported is 3.11.2.
-You might also need to download manually gymnasium and soulsgym. Make sure you have pip installed on your machine.
+Download the requirements from the .txt file. If you have a cuda compatible machine (you can check by typing in your terminal `nvcc --version`), run the command
 
-`pip install gymnasium soulsgym`
+`pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117`
 
-To activate the venv, simply go to the root directory and type `souls\Scripts\activate` in your terminal.
+otherwise just run
+
+`pip install torch`
+
+To activate the venv, simply go to the root directory and type `myenv\Scripts\activate` in your terminal.
 
 # PROJECT DIARY
 https://docs.google.com/document/d/1M2HvsFlbMib0nFVNFCUXnuU_41kA6tJAe7srcPvQCS0/edit?usp=sharing
