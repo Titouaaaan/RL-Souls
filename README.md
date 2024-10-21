@@ -7,6 +7,14 @@ I am working on this project during my gap year between my M1 and M2 at Sorbonne
 # Requirements and Virtual environment
 **This project is currently only available on Windows!**
 
+First create a virtual environment:
+
+`py -3.11.2 -m venv myenv` (we specifically need python version 3.11.2)
+
+Activate the environment with:
+
+`myenv\Scripts\activate`
+
 Download the requirements from the .txt file. If you have a cuda compatible machine (you can check by typing in your terminal `nvcc --version`), run the command
 
 `pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117`
