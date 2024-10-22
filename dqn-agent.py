@@ -4,6 +4,7 @@ import soulsgym
 import math
 import random
 import numpy
+import csv
 # import matplotlib
 # import matplotlib.pyplot as plt
 from collections import namedtuple, deque
@@ -16,7 +17,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-assert torch.cuda.is_available()
+from pathlib import Path
+from soulsgym.core.speedhack import inject_dll, SpeedHackConnector
 
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
@@ -34,6 +36,16 @@ device = torch.device(
 )
 
 env = gymnasium.make("SoulsGymIudex-v0")
+
+'''dll_path = Path("D:\GAP YEAR\RL-Souls\soulsenv\Lib\site-packages\soulsgym\core\speedhack\_C\SpeedHackDLL.dll")
+
+inject_dll("DarkSoulsIII.exe", dll_path)
+
+# Initialize the speedhack connector
+speedhack = SpeedHackConnector(process_name="DarkSoulsIII.exe")
+
+# Set the game speed (e.g., 2.0 for double speed)
+speedhack.set_game_speed(2.0)'''
 
 def preprocess_state(state_dict):
     state_values = []
@@ -67,6 +79,21 @@ def preprocess_state(state_dict):
     
     return state_tensor.unsqueeze(0).flatten()  # Add batch dimension
 
+# Function to log data into a CSV file
+def log_episode_data(episode, steps, avg_reward, avg_loss, filename="training_log.csv"):
+    # Write header only once (for the first episode)
+    if episode == 0:
+        with open(filename, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["Episode", "Steps", "Avg Reward", "Avg Loss"])
+    
+    # Append data for each episode
+    with open(filename, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow([episode, steps, avg_reward, avg_loss])
+
+episode_losses = []
+episode_rewards = []
 
 class ReplayMemory(object):
 
@@ -208,6 +235,12 @@ for i_episode in range(num_episodes):
     state = preprocess_state(state)
     # state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
     state = state.clone().detach().unsqueeze(0)
+    # state
+
+    total_reward = 0
+    total_loss = 0
+    episode_steps = 0
+
     for t in count():
         action = select_action(state)
 
@@ -216,7 +249,11 @@ for i_episode in range(num_episodes):
 
         observation = preprocess_state(observation)
         reward = torch.tensor([reward], device=device)
-        print(f"reward at time {t}: {reward}")
+        # print(f"reward at time {t}: {reward}")
+
+        total_reward += reward.item()
+        episode_steps += 1
+
         done = terminated or truncated
 
         if terminated:
@@ -231,7 +268,10 @@ for i_episode in range(num_episodes):
         state = next_state
 
         # Perform one step of the optimization (on the policy network)
-        optimize_model()
+        loss = optimize_model()
+
+        if loss is not None:
+            total_loss += loss.item()
 
         # Soft update of the target network's weights
         # θ′ ← τ θ + (1 −τ )θ′
@@ -242,7 +282,51 @@ for i_episode in range(num_episodes):
         target_net.load_state_dict(target_net_state_dict)
 
         if done:
+
+            # Calculate average reward and loss for the episode
+            avg_reward = total_reward / episode_steps
+            avg_loss = total_loss / episode_steps if episode_steps > 0 else 0
+            print(f'Episode {i_episode}: episode steps={episode_steps}, avg_reward={avg_reward}, avg_loss={avg_loss}')
+
+            # Save the episode data to the log file
+            log_episode_data(i_episode, episode_steps, avg_reward, avg_loss)
+
+            episode_rewards.append(avg_reward)
+            episode_losses.append(avg_loss)
+
             episode_durations.append(t + 1)
             break
 
 print('Complete')
+
+# Save the trained policy network
+torch.save(policy_net.state_dict(), "dqn_iudex_policy.pth")
+
+'''
+# POTENTIAL WAY OF EVALUATING THE MODEL - TO DO LATER
+# Load the saved policy network
+policy_net = DQN(n_observations, n_actions).to(device)
+policy_net.load_state_dict(torch.load("dqn_iudex_policy.pth"))
+
+# Set the network to evaluation mode
+policy_net.eval()
+
+# Evaluate the agent (you can use a loop or a single run)
+state, info = env.reset()
+state = preprocess_state(state)
+for t in count():
+    # Select an action without exploration (no epsilon-greedy during evaluation)
+    with torch.no_grad():
+        action = policy_net(state).max(1)[1].view(1, 1)
+
+    observation, reward, terminated, truncated, _ = env.step(action.item())
+    observation = preprocess_state(observation)
+    
+    state = torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
+    
+    # Check if the episode is over
+    if terminated or truncated:
+        break
+
+print("Evaluation Complete")
+'''
