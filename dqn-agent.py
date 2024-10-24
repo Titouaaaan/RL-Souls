@@ -153,6 +153,11 @@ policy_net = DQN(n_observations, n_actions).to(device)
 target_net = DQN(n_observations, n_actions).to(device)
 target_net.load_state_dict(policy_net.state_dict())
 
+LOAD_PROLICY = True
+
+if LOAD_PROLICY:
+    policy_net.load_state_dict(torch.load("dqn_iudex_policy.pth"))
+
 optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
 memory = ReplayMemory(10000)
 
@@ -227,7 +232,7 @@ def optimize_model():
     return loss
 
 if torch.cuda.is_available() or torch.backends.mps.is_available():
-    num_episodes = 600
+    num_episodes = 5000
 else:
     num_episodes = 50
 
@@ -242,6 +247,8 @@ for i_episode in range(num_episodes):
     total_reward = 0
     total_loss = 0
     episode_steps = 0
+    if i_episode%500==0:
+        torch.save(policy_net.state_dict(), "dqn_iudex_policy.pth")
 
     for t in count():
         action = select_action(state)
