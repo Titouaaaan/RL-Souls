@@ -224,6 +224,8 @@ def optimize_model():
     torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100) # change vale here to lower for more stability?
     optimizer.step()
 
+    return loss
+
 if torch.cuda.is_available() or torch.backends.mps.is_available():
     num_episodes = 600
 else:
@@ -269,7 +271,7 @@ for i_episode in range(num_episodes):
 
         # Perform one step of the optimization (on the policy network)
         loss = optimize_model()
-
+    
         if loss is not None:
             total_loss += loss.item()
 
