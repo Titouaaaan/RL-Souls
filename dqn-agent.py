@@ -5,6 +5,7 @@ import math
 import random
 import numpy
 import csv
+import os
 # import matplotlib
 # import matplotlib.pyplot as plt
 from collections import namedtuple, deque
@@ -19,6 +20,9 @@ import torch.nn.functional as F
 
 from pathlib import Path
 from soulsgym.core.speedhack import inject_dll, SpeedHackConnector
+
+import glob
+from datetime import datetime
 
 Transition = namedtuple('Transition',
                         ('state', 'action', 'next_state', 'reward'))
@@ -114,16 +118,45 @@ class DQN(nn.Module):
 
     def __init__(self, n_observations, n_actions):
         super(DQN, self).__init__()
-        self.layer1 = nn.Linear(n_observations, 128)
-        self.layer2 = nn.Linear(128, 128)
-        self.layer3 = nn.Linear(128, n_actions)
+        self.layer1 = nn.Linear(n_observations, 256)  # Increase units to capture more features
+        self.layer2 = nn.Linear(256, 128)
+        self.layer3 = nn.Linear(128, 64) 
+        self.output_layer = nn.Linear(64, n_actions)
+
+        # maybe add batch normalization?
+        # self.bn1 = nn.BatchNorm1d(256)
+        # self.bn2 = nn.BatchNorm1d(128)
 
     # Called with either one element to determine next action, or a batch
     # during optimization. Returns tensor([[left0exp,right0exp]...]).
     def forward(self, x):
         x = F.relu(self.layer1(x))
         x = F.relu(self.layer2(x))
-        return self.layer3(x)
+        x = F.relu(self.layer3(x))
+        return self.output_layer(x)
+    # if we add batch norm: (add in between each hidden layer)
+    # x = F.relu(self.bn1(self.layer1(x)))
+    # x = F.relu(self.bn2(self.layer2(x)))
+
+checkpoint_counter = 0
+
+def save_checkpoint(policy_net, optimizer, checkpoint_dir="checkpoints"):
+    global checkpoint_counter
+    
+    # Create directory if it doesn't exist
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    # Generate a checkpoint filename with an incrementing ID
+    checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{checkpoint_counter}.pth")
+    
+    # Save the checkpoint
+    torch.save({
+        'model_state_dict': policy_net.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict()
+    }, checkpoint_path)
+    
+    print(f"Checkpoint saved: {checkpoint_path}")
+    checkpoint_counter += 1
     
 # BATCH_SIZE is the number of transitions sampled from the replay buffer
 # GAMMA is the discount factor as mentioned in the previous section
@@ -136,8 +169,8 @@ BATCH_SIZE = 128
 GAMMA = 0.99
 EPS_START = 0.95
 EPS_END = 0.05
-EPS_DECAY = 5000
-TAU = 0.01
+EPS_DECAY = 2000 # increase for more randomness
+TAU = 0.05 # lower for slower update time of the target network
 LR = 1e-4
 
 # Get number of actions from gym action space
@@ -149,17 +182,58 @@ n_observations = len(state)
 print('Amount of obs: ', n_observations)
 print(state)
 
+""" checkpoint_path = "checkpoint.pth"
+
+# Check if the checkpoint file exists; if not, create an initial blank one
+if os.path.exists(checkpoint_path):
+    print("Checkpoint found, loading model and optimizer states...")
+    checkpoint = torch.load(checkpoint_path)
+    policy_net = DQN(n_observations, n_actions).to(device)
+    target_net = DQN(n_observations, n_actions).to(device)
+    policy_net.load_state_dict(checkpoint['model_state_dict'])
+    target_net.load_state_dict(policy_net.state_dict())
+    optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+else:
+    print("Checkpoint not found, initializing new model and optimizer.")
+    policy_net = DQN(n_observations, n_actions).to(device)
+    target_net = DQN(n_observations, n_actions).to(device)
+    target_net.load_state_dict(policy_net.state_dict())
+    optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
+    
+    # Create a blank checkpoint file with initialized model and optimizer
+    torch.save({
+        'model_state_dict': policy_net.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict()
+    }, checkpoint_path) """
+
+checkpoint_dir = "checkpoints"
+os.makedirs(checkpoint_dir, exist_ok=True)
+
+# Find the latest checkpoint in the directory
+latest_checkpoint = max(glob.glob(f"{checkpoint_dir}/checkpoint_*.pth"), default=None, key=os.path.getctime)
+
+# Initialize model and optimizer
 policy_net = DQN(n_observations, n_actions).to(device)
 target_net = DQN(n_observations, n_actions).to(device)
-target_net.load_state_dict(policy_net.state_dict())
-
-LOAD_PROLICY = True
-
-if LOAD_PROLICY:
-    policy_net.load_state_dict(torch.load("dqn_iudex_policy.pth"))
-
 optimizer = optim.AdamW(policy_net.parameters(), lr=LR, amsgrad=True)
-memory = ReplayMemory(10000)
+
+# If a checkpoint exists, load the latest one
+if latest_checkpoint:
+    print(f"Checkpoint found ({latest_checkpoint}), loading model and optimizer states...")
+    checkpoint = torch.load(latest_checkpoint)
+    policy_net.load_state_dict(checkpoint['model_state_dict'])
+    target_net.load_state_dict(policy_net.state_dict())
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+else:
+    print("No checkpoint found, initializing new model and optimizer.")
+    # Optionally, save an initial blank checkpoint
+    torch.save({
+        'model_state_dict': policy_net.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict()
+    }, os.path.join(checkpoint_dir, f"checkpoint_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth"))
+
+memory = ReplayMemory(50000)
 
 
 steps_done = 0
@@ -225,8 +299,23 @@ def optimize_model():
     # Optimize the model
     optimizer.zero_grad()
     loss.backward()
+
+    CLIP_DEBUGGER = False
+    # Calculate and print the gradient norm for each layer
+    if CLIP_DEBUGGER:
+        total_norm = 0
+        for p in policy_net.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)  # Calculate the L2 norm for each parameter's gradient
+                total_norm += param_norm.item() ** 2
+
+        # Take the square root to get the total gradient norm
+        total_norm = total_norm ** 0.5
+        print("Total gradient norm:", total_norm)
+
     # In-place gradient clipping
-    torch.nn.utils.clip_grad_value_(policy_net.parameters(), 100) # change vale here to lower for more stability?
+    CLIP_VALUE = 100 # need to monitor some more before deciding
+    torch.nn.utils.clip_grad_value_(policy_net.parameters(), CLIP_VALUE) 
     optimizer.step()
 
     return loss
@@ -247,8 +336,12 @@ for i_episode in range(num_episodes):
     total_reward = 0
     total_loss = 0
     episode_steps = 0
-    if i_episode%500==0:
-        torch.save(policy_net.state_dict(), "dqn_iudex_policy.pth")
+    if i_episode%250==0:
+        """ torch.save({
+            'model_state_dict': policy_net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict()
+        }, "checkpoint.pth") """
+        save_checkpoint(policy_net, optimizer)
 
     for t in count():
         action = select_action(state)
