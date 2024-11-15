@@ -11,6 +11,7 @@ import os
 from collections import namedtuple, deque
 from itertools import count
 import time
+from tqdm import tqdm
 import plotly.graph_objects as go
 
 import torch
@@ -325,7 +326,10 @@ if torch.cuda.is_available() or torch.backends.mps.is_available():
 else:
     num_episodes = 50
 
-for i_episode in range(num_episodes):
+progress_bar = tqdm(range(num_episodes), desc="Training Progress", unit="episode")
+training_start_time = time.time()
+
+for i_episode in progress_bar:
     # Initialize the environment and get its state
     state, info = env.reset()
     state = preprocess_state(state)
@@ -388,18 +392,23 @@ for i_episode in range(num_episodes):
             # Calculate average reward and loss for the episode
             avg_reward = total_reward / episode_steps
             avg_loss = total_loss / episode_steps if episode_steps > 0 else 0
-            print(f'Episode {i_episode}: episode steps={episode_steps}, avg_reward={avg_reward}, avg_loss={avg_loss}')
-
-            # Save the episode data to the log file
-            log_episode_data(i_episode, episode_steps, avg_reward, avg_loss)
-
+            #print(f'Episode {i_episode}: episode steps={episode_steps}, avg_reward={avg_reward}, avg_loss={avg_loss}')            
             episode_rewards.append(avg_reward)
             episode_losses.append(avg_loss)
-
             episode_durations.append(t + 1)
+            log_episode_data(i_episode, episode_steps, avg_reward, avg_loss)
+
+            progress_bar.set_postfix({
+                "Episode": i_episode,
+                "Steps": episode_steps,
+                "Avg Reward": f"{avg_reward:.4f}",
+                "Avg Loss": f"{avg_loss:.4f}"
+            })
             break
 
-print('Complete')
+training_end_time = time.time()
+training_duration = training_end_time - training_start_time
+print(f"\nTraining complete in {training_duration / 60:.2f} minutes.")
 
 # Save the trained policy network
 torch.save(policy_net.state_dict(), "dqn_iudex_policy.pth")
