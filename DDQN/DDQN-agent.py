@@ -4,10 +4,14 @@ from gymnasium.spaces.utils import flatdim
 from gymnasium.spaces.utils import flatten
 import soulsgym
 
+from soulsgym.envs.darksouls3.iudex import IudexEnv
 
 import numpy as np
 import random
 import collections
+import csv
+import os
+from datetime import datetime
 
 import soulsgym.core
 import soulsgym.core.speedhack
@@ -21,6 +25,13 @@ device = torch.device(
     "mps" if torch.backends.mps.is_available() else
     "cpu"
 ) 
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+file_path = f"logs/performance_{timestamp}.csv"
+if not os.path.exists(file_path):
+    with open(file_path, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Episode', 'Reward'])  # Add headers
 
 class QNetwork(nn.Module):
     def __init__(self, action_dim, state_dim, hidden_dim):
@@ -115,7 +126,7 @@ def evaluate(Qmodel, env, repeats):
     Qmodel.eval()
     perform = 0
     for _ in range(repeats):
-        state = env.reset()
+        state, info = env.reset()
         done = False
         while not done:
             state = torch.Tensor(state).to(device)
@@ -167,6 +178,32 @@ def game_state_to_observation(game_state):
         ),
         "lock_on": int(game_state.lock_on),  # Convert boolean to integer
     }
+
+def compute_reward(game_state, next_game_state):
+    """Custom reward computation logic."""
+    # Reward for hitting the boss
+    boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
+    hit_reward = 10 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
+
+    # Reward for getting hit
+    player_hp_diff = next_game_state.player_hp - game_state.player_hp
+    hit_taken_reward = 5 * (player_hp_diff / game_state.player_max_hp)  # High positive reward
+
+    # Penalty for rolling
+    # print(game_state.player_animation)
+    valid_roll = ["RollingMedium", "RollingMediumSelftra"]
+    roll_penalty = -0.5 if game_state.player_animation in valid_roll else 0  # Small penalty for rolling
+
+    # Penalty for time spent
+    time_penalty = -0.01  # Small penalty per step for time spent
+
+    # Combine rewards and penalties
+    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty
+
+    return total_reward
+
+IudexEnv.compute_reward = staticmethod(compute_reward)
+save_path = "models/q_network.pth"
 
 def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0.01, update_step=10, batch_size=64, update_repeats=50,
          num_episodes=3000, seed=42, max_memory_size=5000, lr_gamma=1, lr_step=100, measure_step=100,
@@ -232,11 +269,17 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
     for episode in range(num_episodes):
         # display the performance
         if (episode % measure_step == 0) and episode >= min_episodes:
-            performance.append([episode, evaluate(Q_1, env, measure_repeats)])
+            perf = [episode, evaluate(Q_1, env, measure_repeats)]
+            performance.append(perf)
             print("Episode: ", episode)
             print("rewards: ", performance[-1][1])
             print("lr: ", scheduler.get_last_lr()[0])
             print("eps: ", eps)
+
+            with open(file_path, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                writer.writerow(perf)
+                print('Data logged!')
 
         state, info = env.reset()
         """ print('STATE DEBUG')
@@ -247,6 +290,7 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
 
         done = False
         i = 0
+        reward_cumsum = 0
         while not done:
             i += 1
             action = select_action(Q_2, env, state, eps)
@@ -254,15 +298,17 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
             state, reward, done, truncated, _ = env.step(action)
             state = flatten(env.observation_space, state)
 
+            #print("reward: ", reward)
+            reward_cumsum += reward
+            
             if i > horizon:
                 done = True
 
-            # render the environment if render == True
-            if render and episode % render_step == 0:
-                env.render()
 
             # save state, action, reward sequence
             memory.update(state, action, reward, done)
+
+        print(f"episode {episode} lasted {i} steps, reward cumulative sum: ", reward_cumsum)
 
         if episode >= min_episodes and episode % update_step == 0:
             for _ in range(update_repeats):
@@ -276,8 +322,16 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
             scheduler.step()
         eps = max(eps*eps_decay, eps_min)
 
+        """ episode_loss.append(reward_cumsum)
+        plot_loss(episode_loss, show_result=True) """
+
+        if episode % 100 == 0:
+            torch.save(Q_1.state_dict(), save_path)
+
     return Q_1, performance
 
 
 if __name__ == '__main__':
-    main()
+    Q_1, performance = main()
+    torch.save(Q_1.state_dict(), save_path)
+    print(f"Model saved to {save_path}")
