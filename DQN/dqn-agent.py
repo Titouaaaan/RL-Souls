@@ -141,7 +141,7 @@ class DQN(nn.Module):
 
 checkpoint_counter = 0
 
-def save_checkpoint(policy_net, optimizer, checkpoint_dir="checkpoints"):
+def save_checkpoint(policy_net, optimizer, params, checkpoint_dir="checkpoints"):
     global checkpoint_counter
     
     # Create directory if it doesn't exist
@@ -153,7 +153,8 @@ def save_checkpoint(policy_net, optimizer, checkpoint_dir="checkpoints"):
     # Save the checkpoint
     torch.save({
         'model_state_dict': policy_net.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()
+        'optimizer_state_dict': optimizer.state_dict(),
+        'params': params
     }, checkpoint_path)
     
     print(f"Checkpoint saved: {checkpoint_path}")
@@ -166,13 +167,23 @@ def save_checkpoint(policy_net, optimizer, checkpoint_dir="checkpoints"):
 # EPS_DECAY controls the rate of exponential decay of epsilon, higher means a slower decay
 # TAU is the update rate of the target network
 # LR is the learning rate of the ``AdamW`` optimizer
-BATCH_SIZE = 128
+BATCH_SIZE = 256
 GAMMA = 0.99
 EPS_START = 0.95
 EPS_END = 0.05
-EPS_DECAY = 2000 # increase for more randomness
-TAU = 0.05 # lower for slower update time of the target network
-LR = 1e-4
+EPS_DECAY = 5000 # increase for more randomness
+TAU = 0.02 # lower for slower update time of the target network
+LR = 1e-5
+
+params = {
+    "BATCH_SIZE": BATCH_SIZE,
+    "GAMMA": GAMMA,
+    "EPS_START": EPS_START,
+    "EPS_END": EPS_END,
+    "EPS_DECAY": EPS_DECAY,
+    "TAU": TAU,
+    "LR": LR
+}
 
 # Get number of actions from gym action space
 n_actions = env.action_space.n
@@ -212,7 +223,11 @@ checkpoint_dir = "checkpoints"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 # Find the latest checkpoint in the directory
-latest_checkpoint = max(glob.glob(f"{checkpoint_dir}/checkpoint_*.pth"), default=None, key=os.path.getctime)
+START_OVER = True
+if not START_OVER:
+    latest_checkpoint = max(glob.glob(f"{checkpoint_dir}/checkpoint_*.pth"), default=None, key=os.path.getctime)
+else:
+    latest_checkpoint = None
 
 # Initialize model and optimizer
 policy_net = DQN(n_observations, n_actions).to(device)
@@ -233,6 +248,13 @@ else:
         'model_state_dict': policy_net.state_dict(),
         'optimizer_state_dict': optimizer.state_dict()
     }, os.path.join(checkpoint_dir, f"checkpoint_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pth"))
+
+'''
+ADD SOMETHING LIKE THIS EVENTUALLY TO SAVE AND PLAY AROUND WITH PARAMS
+loaded_params = checkpoint.get('params', {})
+if loaded_params:
+    print("Loaded parameters:", loaded_params)
+'''
 
 memory = ReplayMemory(50000)
 
@@ -345,7 +367,7 @@ for i_episode in progress_bar:
             'model_state_dict': policy_net.state_dict(),
             'optimizer_state_dict': optimizer.state_dict()
         }, "checkpoint.pth") """
-        save_checkpoint(policy_net, optimizer)
+        save_checkpoint(policy_net, optimizer, params)
 
     for t in count():
         action = select_action(state)
