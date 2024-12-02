@@ -34,20 +34,65 @@ if not os.path.exists(file_path):
         writer.writerow(['Episode', 'Reward'])  # Add headers
 
 class QNetwork(nn.Module):
+    """
+    Deep Q-Network (DQN) Architecture.
+
+    This architecture is designed to approximate the Q-function for a reinforcement learning agent.
+    The choice of architecture considers the complexity of the task, the size of the observation
+    space (110 features after flattening), and the need for robust and stable training. The main 
+    architectural decisions are as follows:
+
+    - **Fully Connected Layers**: Suitable for handling flattened, non-sequential observations.
+      The architecture includes three hidden layers to capture complex relationships in the state space.
+
+    - **Hidden Dimension**: Each hidden layer uses a configurable number of neurons (`hidden_dim`), 
+      which provides sufficient capacity for learning without overfitting. Larger values (e.g., 128 or 256) 
+      are recommended for larger observation spaces.
+
+    - **Leaky ReLU Activation**: Used to prevent the "dying ReLU" problem and ensure gradient flow even 
+      for small or negative activations. This is especially useful in deeper networks.
+
+    - **Dropout Regularization**: Prevents overfitting by randomly deactivating neurons during training. 
+      A small dropout probability (e.g., 0.2) balances regularization without excessive information loss.
+
+    - **Output Layer**: The final layer outputs Q-values for all possible actions, with no activation function. 
+      This allows the Q-values to remain unbounded, as required by the Bellman equation.
+
+    Args:
+        action_dim (int): Number of possible actions in the action space.
+        state_dim (int): Dimensionality of the flattened observation space.
+        hidden_dim (int): Number of neurons in each hidden layer.
+
+    Returns:
+        torch.Tensor: Predicted Q-values for all actions, given an input state.
+    """
     def __init__(self, action_dim, state_dim, hidden_dim):
         super(QNetwork, self).__init__()
+        # if starting hidden_dim is 64 we get 64 -> 128 -> 256
+        self.fc_1 = nn.Linear(state_dim, hidden_dim) 
+        self.fc_2 = nn.Linear(hidden_dim, hidden_dim*2)
+        self.fc_3 = nn.Linear(hidden_dim*2, hidden_dim*4)
+        self.fc_out = nn.Linear(hidden_dim*4, action_dim)
 
-        self.fc_1 = nn.Linear(state_dim, hidden_dim)
-        self.fc_2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc_3 = nn.Linear(hidden_dim, action_dim)
+        self.dropout = nn.Dropout(0.2)  # Regularization
 
     def forward(self, inp):
+        # Input -> Hidden Layer 1
+        x = F.leaky_relu(self.fc_1(inp))
+        x = self.dropout(x)  # Dropout after activation
 
-        x1 = F.leaky_relu(self.fc_1(inp))
-        x1 = F.leaky_relu(self.fc_2(x1))
-        x1 = self.fc_3(x1)
+        # Hidden Layer 2
+        x = F.leaky_relu(self.fc_2(x))
+        x = self.dropout(x)
 
-        return x1
+        # Hidden Layer 3
+        x = F.leaky_relu(self.fc_3(x))
+        x = self.dropout(x)
+
+        # Output Layer
+        x = self.fc_out(x)
+
+        return x
 
 class Memory:
     def __init__(self, len):
@@ -225,12 +270,12 @@ def compute_reward(game_state, next_game_state):
 
     return total_reward
 
-IudexEnv.compute_reward = staticmethod(compute_reward)
+IudexEnv.compute_reward = staticmethod(compute_reward) #update the reward function of the library to our custom one
 save_path = "models/q_network.pth"
 
 def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0.01, update_step=50, batch_size=128, update_repeats=30,
          num_episodes=10000, seed=42, max_memory_size=20000, lr_gamma=1, lr_step=100, measure_step=100,
-         measure_repeats=100, hidden_dim=128, env_name='SoulsGymIudex-v0', cnn=False, horizon=np.inf, render=False, render_step=50):
+         measure_repeats=100, hidden_dim=64, env_name='SoulsGymIudex-v0', save_model=50, cnn=False, horizon=np.inf, render=False, render_step=50):
     """
     Remark: Convergence is slow. Wait until around episode 2500 to see good performance.
 
@@ -253,6 +298,7 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
     :param measure_repeats: the amount of episodes played in to asses performance
     :param hidden_dim: hidden dimensions for the Q_network
     :param env_name: name of the gym environment
+    :param save_model: after every save_model episodes, save the model
     :param cnn: set to "True" when using environments with image observations like "Pong-v0"
     :param horizon: number of steps taken in the environment before terminating the episode (prevents very long episodes)
     :param render: if "True" renders the environment every "render_step" episodes
@@ -350,7 +396,7 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
         """ episode_loss.append(reward_cumsum)
         plot_loss(episode_loss, show_result=True) """
 
-        if episode % 100 == 0:
+        if episode % save_model == 0: 
             torch.save(Q_1.state_dict(), save_path)
 
     return Q_1, performance
