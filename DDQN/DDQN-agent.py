@@ -26,12 +26,26 @@ device = torch.device(
     "cpu"
 ) 
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-file_path = f"logs/performance_{timestamp}.csv"
-if not os.path.exists(file_path):
-    with open(file_path, mode='w', newline='') as file:
+""" timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+performance_path = f"logs/performance_{timestamp}.csv"
+if not os.path.exists(performance_path):
+    with open(performance_path, mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Episode', 'Reward'])  # Add headers
+
+model_path = f"models/model_{timestamp}.pth"
+opti_path = f"models/opti_{timestamp}.pth"
+param_path = f"models/params_{timestamp}.txt" """
+timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')  # e.g., "20231126_150102"
+run_folder = f"run_{timestamp}"
+os.makedirs(run_folder, exist_ok=True)
+
+# File paths for saving logs, models, and parameters
+performance_file = os.path.join(run_folder, "performance.csv")
+model_file = os.path.join(run_folder, "model.pth")
+optimizer_file = os.path.join(run_folder, "optimizer.pth")
+params_file = os.path.join(run_folder, "params.txt")
+
 
 class QNetwork(nn.Module):
     """
@@ -346,7 +360,7 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
             print("lr: ", scheduler.get_last_lr()[0])
             print("eps: ", eps)
 
-            with open(file_path, mode='a', newline='') as file:
+            with open(performance_file, mode='a', newline='') as file:
                 writer = csv.writer(file)
                 writer.writerow(perf)
                 print('Data logged!')
@@ -396,8 +410,36 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
         """ episode_loss.append(reward_cumsum)
         plot_loss(episode_loss, show_result=True) """
 
-        if episode % save_model == 0: 
-            torch.save(Q_1.state_dict(), save_path)
+        if episode % 2 == 0: 
+            torch.save(Q_1.state_dict(), model_file)
+
+            torch.save(optimizer.state_dict(), optimizer_file)
+            params = {
+            "gamma": gamma,
+            "lr": lr,
+            "min_episodes": min_episodes,
+            "eps": eps,
+            "eps_decay": eps_decay,
+            "eps_min": eps_min,
+            "update_step": update_step,
+            "batch_size": batch_size,
+            "update_repeats": update_repeats,
+            "num_episodes": num_episodes,
+            "seed": seed,
+            "max_memory_size": max_memory_size,
+            "lr_step": lr_step,
+            "lr_gamma": lr_gamma,
+            "measure_step": measure_step,
+            "measure_repeats": measure_repeats,
+            "hidden_dim": hidden_dim,
+            "env_name": env_name,
+            "save_model": save_model,
+            "cnn": cnn,
+            "horizon": horizon
+            }
+            with open(params_file, 'w') as f:
+                for key, value in params.items():
+                    f.write(f"{key}: {value}\n")
 
     return Q_1, performance
 
