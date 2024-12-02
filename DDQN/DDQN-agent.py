@@ -12,6 +12,7 @@ import collections
 import csv
 import os
 from datetime import datetime
+import time
 
 import soulsgym.core
 import soulsgym.core.speedhack
@@ -26,16 +27,6 @@ device = torch.device(
     "cpu"
 ) 
 
-""" timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-performance_path = f"logs/performance_{timestamp}.csv"
-if not os.path.exists(performance_path):
-    with open(performance_path, mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Episode', 'Reward'])  # Add headers
-
-model_path = f"models/model_{timestamp}.pth"
-opti_path = f"models/opti_{timestamp}.pth"
-param_path = f"models/params_{timestamp}.txt" """
 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')  # e.g., "20231126_150102"
 run_folder = f"run_{timestamp}"
 os.makedirs(run_folder, exist_ok=True)
@@ -199,7 +190,7 @@ def evaluate(Qmodel, env, repeats):
     Runs a greedy policy with respect to the current Q-Network for "repeats" many episodes. Returns the average
     episode reward.
     """
-    #print('entering eval')
+    print('evaluating eval')
     Qmodel.eval()
     perform = 0
     for n_rep in range(repeats):
@@ -285,7 +276,6 @@ def compute_reward(game_state, next_game_state):
     return total_reward
 
 IudexEnv.compute_reward = staticmethod(compute_reward) #update the reward function of the library to our custom one
-save_path = "models/q_network.pth"
 
 def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0.01, update_step=50, batch_size=128, update_repeats=30,
          num_episodes=10000, seed=42, max_memory_size=20000, lr_gamma=1, lr_step=100, measure_step=100,
@@ -319,6 +309,30 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
     :param render_step: see above
     :return: the trained Q-Network and the measured performances
     """
+    params = { #im saving it here even tho its not the best but ill fix it later
+            "gamma": gamma,
+            "lr": lr,
+            "min_episodes": min_episodes,
+            "eps": eps,
+            "eps_decay": eps_decay,
+            "eps_min": eps_min,
+            "update_step": update_step,
+            "batch_size": batch_size,
+            "update_repeats": update_repeats,
+            "num_episodes": num_episodes,
+            "seed": seed,
+            "max_memory_size": max_memory_size,
+            "lr_step": lr_step,
+            "lr_gamma": lr_gamma,
+            "measure_step": measure_step,
+            "measure_repeats": measure_repeats,
+            "hidden_dim": hidden_dim,
+            "env_name": env_name,
+            "save_model": save_model,
+            "cnn": cnn,
+            "horizon": horizon
+            }
+    
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -349,7 +363,8 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
 
     memory = Memory(max_memory_size)
     performance = []
-
+    avg_reward = []
+    begin_episodes = time.time()
     for episode in range(num_episodes):
         # display the performance
         if (episode % measure_step == 0) and episode >= min_episodes:
@@ -391,8 +406,9 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
 
             # save state, action, reward sequence
             memory.update(state, action, reward, done)
-
-        print(f"episode {episode} lasted {i} steps, reward cumulative sum: ", reward_cumsum)
+        avg_reward.append(reward_cumsum)
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"episode {episode}/{num_episodes} lasted {i} steps, cumsum reward = {reward_cumsum} (avg = {sum(avg_reward)/len(avg_reward)})")
 
         if episode >= min_episodes and episode % update_step == 0:
             print('Entering the training sequence!')
@@ -410,41 +426,20 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
         """ episode_loss.append(reward_cumsum)
         plot_loss(episode_loss, show_result=True) """
 
-        if episode % 2 == 0: 
+        if episode % save_model == 0: 
             torch.save(Q_1.state_dict(), model_file)
 
             torch.save(optimizer.state_dict(), optimizer_file)
-            params = {
-            "gamma": gamma,
-            "lr": lr,
-            "min_episodes": min_episodes,
-            "eps": eps,
-            "eps_decay": eps_decay,
-            "eps_min": eps_min,
-            "update_step": update_step,
-            "batch_size": batch_size,
-            "update_repeats": update_repeats,
-            "num_episodes": num_episodes,
-            "seed": seed,
-            "max_memory_size": max_memory_size,
-            "lr_step": lr_step,
-            "lr_gamma": lr_gamma,
-            "measure_step": measure_step,
-            "measure_repeats": measure_repeats,
-            "hidden_dim": hidden_dim,
-            "env_name": env_name,
-            "save_model": save_model,
-            "cnn": cnn,
-            "horizon": horizon
-            }
+            
             with open(params_file, 'w') as f:
                 for key, value in params.items():
                     f.write(f"{key}: {value}\n")
+
+            print('Logged data!')
 
     return Q_1, performance
 
 
 if __name__ == '__main__':
     Q_1, performance = main()
-    torch.save(Q_1.state_dict(), save_path)
-    print(f"Model saved to {save_path}")
+    print(f"All run info saved in the folder {run_folder}")

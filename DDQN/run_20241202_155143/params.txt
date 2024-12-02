@@ -1,7 +1,7 @@
 gamma: 0.99
 lr: 0.0005
 min_episodes: 20
-eps: 0.985074875
+eps: 1
 eps_decay: 0.995
 eps_min: 0.01
 update_step: 50
