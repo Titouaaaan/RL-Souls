@@ -60,7 +60,7 @@ class Memory:
         # if the episode is finished we do not save to new state. Otherwise we have more states per episode than rewards
         # and actions whcih leads to a mismatch when we sample from memory.
         if not done:
-            self.state.append(state)
+            self.state.append(state) #do state.cpu().numpy() maybe for consistency?
         self.action.append(action)
         self.rewards.append(reward)
         self.is_done.append(done)
@@ -72,11 +72,27 @@ class Memory:
         n = len(self.is_done)
         idx = random.sample(range(0, n-1), batch_size)
 
-        state = np.array(self.state)
+        """ state = np.array(self.state)
         action = np.array(self.action)
         return torch.Tensor(state)[idx].to(device), torch.LongTensor(action)[idx].to(device), \
                torch.Tensor(state)[1+np.array(idx)].to(device), torch.Tensor(self.rewards)[idx].to(device), \
-               torch.Tensor(self.is_done)[idx].to(device)
+               torch.Tensor(self.is_done)[idx].to(device) """
+        # Convert deque to list and then stack tensors
+        states = torch.stack(list(self.state)).to(device)
+        actions = torch.tensor(self.action, dtype=torch.long).to(device)
+        rewards = torch.tensor(self.rewards, dtype=torch.float32).to(device)
+        is_done = torch.tensor(self.is_done, dtype=torch.float32).to(device)
+
+        # Next states
+        next_states = states[1 + torch.tensor(idx)].to(device)
+
+        return (
+            states[idx],         # Sampled states
+            actions[idx],        # Corresponding actions
+            next_states,         # Corresponding next states
+            rewards[idx],        # Corresponding rewards
+            is_done[idx],        # Done flags
+        )
 
     def reset(self):
         self.rewards.clear()
@@ -99,7 +115,7 @@ def select_action(model, env, state, eps):
 
 
 def train(batch_size, current, target, optim, memory, gamma):
-
+    #print('entering train!')
     states, actions, next_states, rewards, is_done = memory.sample(batch_size)
 
     q_values = current(states)
@@ -112,10 +128,11 @@ def train(batch_size, current, target, optim, memory, gamma):
     expected_q_value = rewards + gamma * next_q_value * (1 - is_done)
 
     loss = (q_value - expected_q_value.detach()).pow(2).mean()
-
+    #print(f'loss: {loss}')
     optim.zero_grad()
     loss.backward()
     optim.step()
+    #print('leaving train')
 
 
 def evaluate(Qmodel, env, repeats):
@@ -123,19 +140,25 @@ def evaluate(Qmodel, env, repeats):
     Runs a greedy policy with respect to the current Q-Network for "repeats" many episodes. Returns the average
     episode reward.
     """
+    #print('entering eval')
     Qmodel.eval()
     perform = 0
-    for _ in range(repeats):
+    for n_rep in range(repeats):
+        #print(f'Eval episode #{n_rep}') #debugging
         state, info = env.reset()
+        #convert the obs into a tensor to avoid dealing with dicts
+        state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
         done = False
         while not done:
-            state = torch.Tensor(state).to(device)
+            # state = torch.Tensor(state).to(device)
             with torch.no_grad():
                 values = Qmodel(state)
             action = np.argmax(values.cpu().numpy())
-            state, reward, done, _ = env.step(action)
+            state, reward, done, truncated, _ = env.step(action)
+            state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
             perform += reward
     Qmodel.train()
+    #print('exiting eval')
     return perform/repeats
 
 
@@ -205,9 +228,9 @@ def compute_reward(game_state, next_game_state):
 IudexEnv.compute_reward = staticmethod(compute_reward)
 save_path = "models/q_network.pth"
 
-def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0.01, update_step=10, batch_size=64, update_repeats=50,
-         num_episodes=3000, seed=42, max_memory_size=5000, lr_gamma=1, lr_step=100, measure_step=100,
-         measure_repeats=100, hidden_dim=64, env_name='SoulsGymIudex-v0', cnn=False, horizon=np.inf, render=False, render_step=50):
+def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0.01, update_step=50, batch_size=128, update_repeats=30,
+         num_episodes=10000, seed=42, max_memory_size=20000, lr_gamma=1, lr_step=100, measure_step=100,
+         measure_repeats=100, hidden_dim=128, env_name='SoulsGymIudex-v0', cnn=False, horizon=np.inf, render=False, render_step=50):
     """
     Remark: Convergence is slow. Wait until around episode 2500 to see good performance.
 
@@ -242,6 +265,7 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
     env = gymnasium.make(env_name)
     #env.seed(seed)
     state, info = env.reset()
+    state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
     """ print(type(state))
     print(env.action_space.n)
     print(env.observation_space) """
@@ -285,7 +309,7 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
         """ print('STATE DEBUG')
         print(type(state))
         print(state) """
-        state = flatten(env.observation_space, state)
+        state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
         memory.state.append(state)
 
         done = False
@@ -296,7 +320,7 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
             action = select_action(Q_2, env, state, eps)
             # print("action chose: ", action)
             state, reward, done, truncated, _ = env.step(action)
-            state = flatten(env.observation_space, state)
+            state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
 
             #print("reward: ", reward)
             reward_cumsum += reward
@@ -311,6 +335,7 @@ def main(gamma=0.99, lr=1e-3, min_episodes=20, eps=1, eps_decay=0.998, eps_min=0
         print(f"episode {episode} lasted {i} steps, reward cumulative sum: ", reward_cumsum)
 
         if episode >= min_episodes and episode % update_step == 0:
+            print('Entering the training sequence!')
             for _ in range(update_repeats):
                 train(batch_size, Q_1, Q_2, optimizer, memory, gamma)
 
