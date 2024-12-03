@@ -33,7 +33,8 @@ os.makedirs(run_folder, exist_ok=True)
 
 # File paths for saving logs, models, and parameters
 performance_file = os.path.join(run_folder, "performance.csv")
-model_file = os.path.join(run_folder, "model.pth")
+modelQ1_file = os.path.join(run_folder, "model_Q1.pth")
+modelQ2_file = os.path.join(run_folder, "model_Q2.pth")
 optimizer_file = os.path.join(run_folder, "optimizer.pth")
 params_file = os.path.join(run_folder, "params.txt")
 
@@ -277,6 +278,15 @@ def compute_reward(game_state, next_game_state):
 
 IudexEnv.compute_reward = staticmethod(compute_reward) #update the reward function of the library to our custom one
 
+''' This part is optional here its just if we want to load a model and an optimizer to resume training
+also make sure ur in the right directory for it to work '''
+load_model = False
+optional_run_folder = ''
+# Paths for model and optimizer
+optional_modelQ1_file = os.path.join(run_folder, "model_Q1.pth")
+optional_modelQ2_file = os.path.join(run_folder, "model_Q2.pth")
+optional_optimizer_file = os.path.join(run_folder, "optimizer.pth")
+
 def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0.01, update_step=50, batch_size=128, update_repeats=30,
          num_episodes=10000, seed=42, max_memory_size=20000, lr_gamma=1, lr_step=100, measure_step=100,
          measure_repeats=100, hidden_dim=64, env_name='SoulsGymIudex-v0', save_model=50, cnn=False, horizon=np.inf, render=False, render_step=50):
@@ -361,6 +371,25 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
     optimizer = torch.optim.Adam(Q_1.parameters(), lr=lr)
     scheduler = StepLR(optimizer, step_size=lr_step, gamma=lr_gamma)
 
+    ''' Used to load a model and optimizer to resume training from previous run'''
+    if load_model:
+        print(f"Loading model and optimizer from folder: {run_folder}")
+        if os.path.exists(optional_modelQ1_file) and os.path.exists(optional_modelQ2_file)and os.path.exists(optional_optimizer_file):
+            # Load model state_dict
+            Q_1.load_state_dict(torch.load(optional_modelQ1_file))
+            print(f"Model loaded from {optional_modelQ1_file}")
+
+            Q_2.load_state_dict(torch.load(optional_modelQ2_file))
+            print(f"Model loaded from {optional_modelQ2_file}")
+
+            # Load optimizer state_dict
+            optimizer.load_state_dict(torch.load(optimizer_file))
+            print(f"Optimizer loaded from {optimizer_file}")
+        else:
+            print(f"Error: Model or optimizer file not found in {run_folder}")
+    else:
+        print("Starting training from scratch.")
+
     memory = Memory(max_memory_size)
     performance = []
     avg_reward = []
@@ -427,7 +456,9 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
         plot_loss(episode_loss, show_result=True) """
 
         if episode % save_model == 0: 
-            torch.save(Q_1.state_dict(), model_file)
+            torch.save(Q_1.state_dict(), modelQ1_file)
+
+            torch.save(Q_1.state_dict(), modelQ2_file)
 
             torch.save(optimizer.state_dict(), optimizer_file)
             
@@ -442,4 +473,5 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
 
 if __name__ == '__main__':
     Q_1, performance = main()
-    print(f"All run info saved in the folder {run_folder}")
+    torch.save(Q_1.state_dict(), modelQ1_file)
+    print(f"All saves and data info saved in the folder {run_folder}")
