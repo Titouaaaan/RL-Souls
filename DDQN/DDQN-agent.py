@@ -259,9 +259,9 @@ def compute_reward(game_state, next_game_state):
     boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
     hit_reward = 10 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
 
-    # Reward for getting hit
+    # Negative Reward for getting hit
     player_hp_diff = next_game_state.player_hp - game_state.player_hp
-    hit_taken_reward = 5 * (player_hp_diff / game_state.player_max_hp)  # High positive reward
+    hit_taken_reward = 5 * (player_hp_diff / game_state.player_max_hp)  # High negative reward
 
     # Penalty for rolling
     # print(game_state.player_animation)
@@ -280,12 +280,12 @@ IudexEnv.compute_reward = staticmethod(compute_reward) #update the reward functi
 
 ''' This part is optional here its just if we want to load a model and an optimizer to resume training
 also make sure ur in the right directory for it to work '''
-load_model = False
-optional_run_folder = ''
+load_model = True
+optional_run_folder = 'run_20241203_232722'
 # Paths for model and optimizer
-optional_modelQ1_file = os.path.join(run_folder, "model_Q1.pth")
-optional_modelQ2_file = os.path.join(run_folder, "model_Q2.pth")
-optional_optimizer_file = os.path.join(run_folder, "optimizer.pth")
+optional_modelQ1_file = os.path.join(optional_run_folder, "model_Q1.pth")
+optional_modelQ2_file = os.path.join(optional_run_folder, "model_Q2.pth")
+optional_optimizer_file = os.path.join(optional_run_folder, "optimizer.pth")
 
 def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0.01, update_step=50, batch_size=128, update_repeats=30,
          num_episodes=10000, seed=42, max_memory_size=20000, lr_gamma=1, lr_step=100, measure_step=100,
@@ -373,20 +373,22 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
 
     ''' Used to load a model and optimizer to resume training from previous run'''
     if load_model:
-        print(f"Loading model and optimizer from folder: {run_folder}")
-        if os.path.exists(optional_modelQ1_file) and os.path.exists(optional_modelQ2_file)and os.path.exists(optional_optimizer_file):
-            # Load model state_dict
-            Q_1.load_state_dict(torch.load(optional_modelQ1_file))
-            print(f"Model loaded from {optional_modelQ1_file}")
+        print(f"Trying load model and optimizer from folder: {optional_run_folder}")
+        assert os.path.exists(optional_modelQ1_file), f'Q1 not found in folder {optional_run_folder}'
+        assert os.path.exists(optional_modelQ2_file), f'Q2 not found in folder {optional_run_folder}'
+        assert os.path.exists(optional_optimizer_file), f'optimizer not found in folder {optional_run_folder}'
+        
+        # Load model state_dict
+        Q_1.load_state_dict(torch.load(optional_modelQ1_file, weights_only=True))
+        print(f"Model loaded from {optional_modelQ1_file}")
 
-            Q_2.load_state_dict(torch.load(optional_modelQ2_file))
-            print(f"Model loaded from {optional_modelQ2_file}")
+        Q_2.load_state_dict(torch.load(optional_modelQ2_file, weights_only=True))
+        print(f"Model loaded from {optional_modelQ2_file}")
 
-            # Load optimizer state_dict
-            optimizer.load_state_dict(torch.load(optimizer_file))
-            print(f"Optimizer loaded from {optimizer_file}")
-        else:
-            print(f"Error: Model or optimizer file not found in {run_folder}")
+        # Load optimizer state_dict
+        optimizer.load_state_dict(torch.load(optional_optimizer_file, weights_only=True))
+        print(f"Optimizer loaded from {optional_optimizer_file}")
+
     else:
         print("Starting training from scratch.")
 
