@@ -21,6 +21,8 @@ from torch import nn
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR
 
+''' MAKE SURE YOU ARE IN THE DDQN FOLDER OTHERWISE THE SAVE FILES WILL BE IN THE WRONG FOLDER'''
+
 device = torch.device(
     "cuda" if torch.cuda.is_available() else
     "mps" if torch.backends.mps.is_available() else
@@ -191,11 +193,11 @@ def evaluate(Qmodel, env, repeats):
     Runs a greedy policy with respect to the current Q-Network for "repeats" many episodes. Returns the average
     episode reward.
     """
-    print('evaluating eval')
+    print('evaluating')
     Qmodel.eval()
     perform = 0
     for n_rep in range(repeats):
-        #print(f'Eval episode #{n_rep}') #debugging
+        print(f'Eval episode #{n_rep}') #debugging
         state, info = env.reset()
         #convert the obs into a tensor to avoid dealing with dicts
         state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
@@ -209,7 +211,7 @@ def evaluate(Qmodel, env, repeats):
             state = torch.tensor(flatten(env.observation_space, state), dtype=torch.float32).to(device)
             perform += reward
     Qmodel.train()
-    #print('exiting eval')
+    print('exiting eval')
     return perform/repeats
 
 
@@ -257,31 +259,42 @@ def compute_reward(game_state, next_game_state):
     """Custom reward computation logic."""
     # Reward for hitting the boss
     boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
-    hit_reward = 10 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
+    hit_reward = 500 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly, gives approx 30 of reward per hit
+    #print('hit reward', hit_reward)
 
     # Negative Reward for getting hit
     player_hp_diff = next_game_state.player_hp - game_state.player_hp
-    hit_taken_reward = 5 * (player_hp_diff / game_state.player_max_hp)  # High negative reward
+    hit_taken_reward = 30 * (player_hp_diff / game_state.player_max_hp)  # High negative reward between 3-10 penalty
 
     # Penalty for rolling
     # print(game_state.player_animation)
     valid_roll = ["RollingMedium", "RollingMediumSelftra"]
-    roll_penalty = -0.5 if game_state.player_animation in valid_roll else 0  # Small penalty for rolling
+    roll_penalty = -2 if game_state.player_animation in valid_roll else 0  # decent penalty for rolling 
 
     # Penalty for time spent
     time_penalty = -0.01  # Small penalty per step for time spent
 
-    # Combine rewards and penalties
-    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty
+    # huge penalty if player dies
+    # experimental im nit sure if this would work -> doesnt rly lol
+    death = -10 if next_game_state.player_hp == 0 else 0
 
+    # Experimental: Reward for moving towards the arena center, no reward within 4m distance
+    d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
+    d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
+    move_reward = 0.1 * (d_center_prev - d_center_now) * (d_center_now > 4)
+
+    # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_penalty}')
+    # Combine rewards and penalties
+    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty +  move_reward # death +
+    #print(total_reward)
     return total_reward
 
 IudexEnv.compute_reward = staticmethod(compute_reward) #update the reward function of the library to our custom one
 
 ''' This part is optional here its just if we want to load a model and an optimizer to resume training
 also make sure ur in the right directory for it to work '''
-load_model = True
-optional_run_folder = 'run_20241203_232722'
+load_model = False
+optional_run_folder = 'run_20250107_222845'
 # Paths for model and optimizer
 optional_modelQ1_file = os.path.join(optional_run_folder, "model_Q1.pth")
 optional_modelQ2_file = os.path.join(optional_run_folder, "model_Q2.pth")
@@ -438,7 +451,9 @@ def main(gamma=0.99, lr=5e-4, min_episodes=20, eps=1, eps_decay=0.995, eps_min=0
             # save state, action, reward sequence
             memory.update(state, action, reward, done)
         avg_reward.append(reward_cumsum)
-        os.system('cls' if os.name == 'nt' else 'clear')
+        # clear the terminal every 500 episodes
+        if episode % 500 == 0:
+            os.system('cls' if os.name == 'nt' else 'clear')
         print(f"episode {episode}/{num_episodes} lasted {i} steps, cumsum reward = {reward_cumsum} (avg = {sum(avg_reward)/len(avg_reward)})")
 
         if episode >= min_episodes and episode % update_step == 0:
