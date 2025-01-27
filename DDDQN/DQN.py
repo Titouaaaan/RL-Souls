@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 import torch
 import copy
+from utils import flatten_observation
 
 
 def build_net(layer_shape, activation, output_activation):
@@ -57,6 +58,7 @@ class DQN_agent(object):
 
 	def select_action(self, state, deterministic):#only used when interact with the env
 		with torch.no_grad():
+			# state = flatten_observation(state)
 			state = torch.FloatTensor(state.reshape(1, -1)).to(self.dvc)
 			if deterministic:
 				a = self.q_net(state).argmax().item()
