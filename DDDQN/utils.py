@@ -1,6 +1,6 @@
 import numpy as np
 
-def evaluate_policy(env, agent, turns = 3):
+def evaluate_policy(env, agent, turns = 10):
     print('--- Evaluating ---')
     total_scores = 0
     for j in range(turns):

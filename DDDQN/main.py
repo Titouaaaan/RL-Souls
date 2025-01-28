@@ -1,5 +1,6 @@
 from utils import evaluate_policy, str2bool, flatten_observation
 from datetime import datetime
+import time
 from soulsgym.envs.darksouls3.iudex import IudexEnv
 from DQN import DQN_agent
 import gymnasium as gym
@@ -14,7 +15,7 @@ import soulsgym
 parser = argparse.ArgumentParser()
 parser.add_argument('--dvc', type=str, default='cuda', help='running device: cuda or cpu')
 parser.add_argument('--EnvIdex', type=int, default=0, help='Iudex')
-parser.add_argument('--write', type=str2bool, default=False, help='Use SummaryWriter to record the training')
+parser.add_argument('--write', type=str2bool, default=True, help='Use SummaryWriter to record the training, see with tensorboard --logdir=runs')
 parser.add_argument('--render', type=str2bool, default=False, help='Render or Not')
 parser.add_argument('--Loadmodel', type=str2bool, default=False, help='Load pretrained model or Not')
 parser.add_argument('--ModelIdex', type=int, default=100, help='which model to load')
@@ -64,7 +65,7 @@ def compute_reward(game_state, next_game_state):
     """Custom reward computation logic."""
     # Reward for hitting the boss
     boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
-    hit_reward = 500 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly, gives approx 30 of reward per hit
+    hit_reward = 50 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly, gives approx 30 of reward per hit
     #print('hit reward', hit_reward)
 
     # Negative Reward for getting hit
@@ -90,7 +91,7 @@ def compute_reward(game_state, next_game_state):
 
     # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_penalty}')
     # Combine rewards and penalties
-    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty +  move_reward # death +
+    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty +  move_reward # + death 
     #print(total_reward)
     return total_reward
 
@@ -142,6 +143,7 @@ def main():
             score = evaluate_policy(env, agent, 1)
             print('EnvName:', BriefEnvName[opt.EnvIdex], 'seed:', opt.seed, 'score:', score)
     else:
+        start_time = time.time()
         total_steps = 0
         while total_steps < opt.Max_train_steps:
             s, info = env.reset(seed=env_seed) # Do not use opt.seed directly, or it can overfit to opt.seed
@@ -173,6 +175,10 @@ def main():
                     if opt.write:
                         writer.add_scalar('ep_r', score, global_step=total_steps)
                         writer.add_scalar('noise', agent.exp_noise, global_step=total_steps)
+
+                        elapsed_time = time.time() - start_time
+                        elapsed_minutes = elapsed_time / 60
+                        writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
                     print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score))
                 total_steps += 1
 
