@@ -1,7 +1,9 @@
 from utils import evaluate_policy, str2bool, flatten_observation
 from datetime import datetime
+from soulsgym.envs.darksouls3.iudex import IudexEnv
 from DQN import DQN_agent
 import gymnasium as gym
+import numpy as np
 import os, shutil
 import argparse
 import torch
@@ -16,11 +18,12 @@ parser.add_argument('--write', type=str2bool, default=False, help='Use SummaryWr
 parser.add_argument('--render', type=str2bool, default=False, help='Render or Not')
 parser.add_argument('--Loadmodel', type=str2bool, default=False, help='Load pretrained model or Not')
 parser.add_argument('--ModelIdex', type=int, default=100, help='which model to load')
+parser.add_argument('--CustomReward', type=str2bool, default=True, help='Use custom reward function for Iudex env')
 
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 parser.add_argument('--Max_train_steps', type=int, default=int(10e100), help='Max training steps')
 parser.add_argument('--save_interval', type=int, default=int(50e3), help='Model saving interval, in steps.')
-parser.add_argument('--eval_interval', type=int, default=int(2e3), help='Model evaluating interval, in steps.')
+parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
 parser.add_argument('--random_steps', type=int, default=int(3e3), help='steps for random policy to explore')
 parser.add_argument('--update_every', type=int, default=50, help='training frequency')
 
@@ -57,9 +60,47 @@ class PreprocessedEnvWrapper(gym.Wrapper):
         obs = self.preprocess_func(obs)  # Apply preprocessing here
         return obs, reward, terminated, truncated, info
 
+def compute_reward(game_state, next_game_state):
+    """Custom reward computation logic."""
+    # Reward for hitting the boss
+    boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
+    hit_reward = 500 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly, gives approx 30 of reward per hit
+    #print('hit reward', hit_reward)
+
+    # Negative Reward for getting hit
+    player_hp_diff = next_game_state.player_hp - game_state.player_hp
+    hit_taken_reward = 30 * (player_hp_diff / game_state.player_max_hp)  # High negative reward between 3-10 penalty
+
+    # Penalty for rolling
+    # print(game_state.player_animation)
+    valid_roll = ["RollingMedium", "RollingMediumSelftra"]
+    roll_penalty = -2 if game_state.player_animation in valid_roll else 0  # decent penalty for rolling 
+
+    # Penalty for time spent
+    time_penalty = -0.01  # Small penalty per step for time spent
+
+    # huge penalty if player dies
+    # experimental im nit sure if this would work -> doesnt rly lol
+    death = -10 if next_game_state.player_hp == 0 else 0
+
+    # Experimental: Reward for moving towards the arena center, no reward within 4m distance
+    d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
+    d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
+    move_reward = 0.1 * (d_center_prev - d_center_now) * (d_center_now > 4)
+
+    # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_penalty}')
+    # Combine rewards and penalties
+    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty +  move_reward # death +
+    #print(total_reward)
+    return total_reward
+
 def main():
     EnvName = ['SoulsGymIudex-v0'] 
     BriefEnvName = ['Iudex'] 
+
+    if opt.CustomReward:
+        IudexEnv.compute_reward = staticmethod(compute_reward)
+
     env = gym.make(EnvName[opt.EnvIdex])
     env = PreprocessedEnvWrapper(env, flatten_observation)
     opt.state_dim = 26 # env.observation_space.shape[0] # PLEASE FIX THIS LATER
@@ -104,7 +145,6 @@ def main():
         total_steps = 0
         while total_steps < opt.Max_train_steps:
             s, info = env.reset(seed=env_seed) # Do not use opt.seed directly, or it can overfit to opt.seed
-            # s = flatten_observation(s)
             env_seed += 1
             done = False
 
@@ -115,7 +155,6 @@ def main():
                 else: a = agent.select_action(s, deterministic=False)
                 
                 s_next, r, dw, tr, info = env.step(a) # dw: dead&win; tr: truncated
-                # s_next = flatten_observation(s_next)
                 done = (dw or tr)
 
                 agent.replay_buffer.add(s, a, r, s_next, dw)
