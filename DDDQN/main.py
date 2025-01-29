@@ -1,7 +1,10 @@
-from utils import evaluate_policy, str2bool, flatten_observation
+from utils import evaluate_policy, str2bool, flatten_observation, compute_reward
 from datetime import datetime
+import time
+from soulsgym.envs.darksouls3.iudex import IudexEnv
 from DQN import DQN_agent
 import gymnasium as gym
+import numpy as np
 import os, shutil
 import argparse
 import torch
@@ -12,15 +15,16 @@ import soulsgym
 parser = argparse.ArgumentParser()
 parser.add_argument('--dvc', type=str, default='cuda', help='running device: cuda or cpu')
 parser.add_argument('--EnvIdex', type=int, default=0, help='Iudex')
-parser.add_argument('--write', type=str2bool, default=False, help='Use SummaryWriter to record the training')
+parser.add_argument('--write', type=str2bool, default=True, help='Use SummaryWriter to record the training, see with tensorboard --logdir=runs')
 parser.add_argument('--render', type=str2bool, default=False, help='Render or Not')
 parser.add_argument('--Loadmodel', type=str2bool, default=False, help='Load pretrained model or Not')
 parser.add_argument('--ModelIdex', type=int, default=100, help='which model to load')
+parser.add_argument('--CustomReward', type=str2bool, default=True, help='Use custom reward function for Iudex env')
 
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 parser.add_argument('--Max_train_steps', type=int, default=int(10e100), help='Max training steps')
 parser.add_argument('--save_interval', type=int, default=int(50e3), help='Model saving interval, in steps.')
-parser.add_argument('--eval_interval', type=int, default=int(2e3), help='Model evaluating interval, in steps.')
+parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
 parser.add_argument('--random_steps', type=int, default=int(3e3), help='steps for random policy to explore')
 parser.add_argument('--update_every', type=int, default=50, help='training frequency')
 
@@ -58,8 +62,12 @@ class PreprocessedEnvWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
 def main():
-    EnvName = ['SoulsGymIudex-v0'] 
-    BriefEnvName = ['Iudex'] 
+    EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
+    BriefEnvName = ['IudexSimpleReward'] 
+
+    if opt.CustomReward:
+        IudexEnv.compute_reward = staticmethod(compute_reward)
+
     env = gym.make(EnvName[opt.EnvIdex])
     env = PreprocessedEnvWrapper(env, flatten_observation)
     opt.state_dim = 26 # env.observation_space.shape[0] # PLEASE FIX THIS LATER
@@ -101,10 +109,10 @@ def main():
             score = evaluate_policy(env, agent, 1)
             print('EnvName:', BriefEnvName[opt.EnvIdex], 'seed:', opt.seed, 'score:', score)
     else:
+        start_time = time.time()
         total_steps = 0
         while total_steps < opt.Max_train_steps:
             s, info = env.reset(seed=env_seed) # Do not use opt.seed directly, or it can overfit to opt.seed
-            # s = flatten_observation(s)
             env_seed += 1
             done = False
 
@@ -115,7 +123,6 @@ def main():
                 else: a = agent.select_action(s, deterministic=False)
                 
                 s_next, r, dw, tr, info = env.step(a) # dw: dead&win; tr: truncated
-                # s_next = flatten_observation(s_next)
                 done = (dw or tr)
 
                 agent.replay_buffer.add(s, a, r, s_next, dw)
@@ -130,11 +137,15 @@ def main():
                 '''Noise decay & Record & Log'''
                 if total_steps % 1000 == 0: agent.exp_noise *= opt.noise_decay
                 if total_steps % opt.eval_interval == 0:
-                    score = evaluate_policy(env, agent, turns = 3)
+                    score = evaluate_policy(env, agent, turns = 20)
                     if opt.write:
                         writer.add_scalar('ep_r', score, global_step=total_steps)
                         writer.add_scalar('noise', agent.exp_noise, global_step=total_steps)
-                    print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score))
+
+                        elapsed_time = time.time() - start_time
+                        elapsed_minutes = elapsed_time / 60
+                        writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
+                    print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score), 'time elapsed:', elapsed_minutes)
                 total_steps += 1
 
                 '''save model'''
