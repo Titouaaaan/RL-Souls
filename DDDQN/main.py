@@ -62,7 +62,7 @@ class PreprocessedEnvWrapper(gym.Wrapper):
         return obs, reward, terminated, truncated, info
 
 def main():
-    EnvName = ['SoulsGymIudex-v0'] 
+    EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
     BriefEnvName = ['IudexSimpleReward'] 
 
     if opt.CustomReward:
@@ -137,7 +137,7 @@ def main():
                 '''Noise decay & Record & Log'''
                 if total_steps % 1000 == 0: agent.exp_noise *= opt.noise_decay
                 if total_steps % opt.eval_interval == 0:
-                    score = evaluate_policy(env, agent, turns = 10)
+                    score = evaluate_policy(env, agent, turns = 20)
                     if opt.write:
                         writer.add_scalar('ep_r', score, global_step=total_steps)
                         writer.add_scalar('noise', agent.exp_noise, global_step=total_steps)

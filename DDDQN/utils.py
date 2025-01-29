@@ -66,12 +66,12 @@ def compute_reward(game_state, next_game_state):
     """Custom reward computation logic."""
     # Reward for hitting the boss
     boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
-    hit_reward = 100 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly, gives approx 30 of reward per hit
+    hit_reward = 60 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
     #print('hit reward', hit_reward)
 
     # Negative Reward for getting hit
     player_hp_diff = next_game_state.player_hp - game_state.player_hp
-    hit_taken_reward = 60 * (player_hp_diff / game_state.player_max_hp)  # High negative reward between 3-10 penalty
+    hit_taken_reward = 100 * (player_hp_diff / game_state.player_max_hp)  
 
     # Penalty for rolling
     # print(game_state.player_animation)
