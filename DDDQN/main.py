@@ -1,4 +1,4 @@
-from utils import evaluate_policy, str2bool, flatten_observation
+from utils import evaluate_policy, str2bool, flatten_observation, compute_reward
 from datetime import datetime
 import time
 from soulsgym.envs.darksouls3.iudex import IudexEnv
@@ -61,43 +61,9 @@ class PreprocessedEnvWrapper(gym.Wrapper):
         obs = self.preprocess_func(obs)  # Apply preprocessing here
         return obs, reward, terminated, truncated, info
 
-def compute_reward(game_state, next_game_state):
-    """Custom reward computation logic."""
-    # Reward for hitting the boss
-    boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
-    hit_reward = 50 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly, gives approx 30 of reward per hit
-    #print('hit reward', hit_reward)
-
-    # Negative Reward for getting hit
-    player_hp_diff = next_game_state.player_hp - game_state.player_hp
-    hit_taken_reward = 30 * (player_hp_diff / game_state.player_max_hp)  # High negative reward between 3-10 penalty
-
-    # Penalty for rolling
-    # print(game_state.player_animation)
-    valid_roll = ["RollingMedium", "RollingMediumSelftra"]
-    roll_penalty = -2 if game_state.player_animation in valid_roll else 0  # decent penalty for rolling 
-
-    # Penalty for time spent
-    time_penalty = -0.01  # Small penalty per step for time spent
-
-    # huge penalty if player dies
-    # experimental im nit sure if this would work -> doesnt rly lol
-    death = -10 if next_game_state.player_hp == 0 else 0
-
-    # Experimental: Reward for moving towards the arena center, no reward within 4m distance
-    d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
-    d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
-    move_reward = 0.1 * (d_center_prev - d_center_now) * (d_center_now > 4)
-
-    # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_penalty}')
-    # Combine rewards and penalties
-    total_reward = hit_reward + hit_taken_reward + roll_penalty + time_penalty +  move_reward # + death 
-    #print(total_reward)
-    return total_reward
-
 def main():
     EnvName = ['SoulsGymIudex-v0'] 
-    BriefEnvName = ['Iudex'] 
+    BriefEnvName = ['IudexSimpleReward'] 
 
     if opt.CustomReward:
         IudexEnv.compute_reward = staticmethod(compute_reward)
@@ -171,7 +137,7 @@ def main():
                 '''Noise decay & Record & Log'''
                 if total_steps % 1000 == 0: agent.exp_noise *= opt.noise_decay
                 if total_steps % opt.eval_interval == 0:
-                    score = evaluate_policy(env, agent, turns = 3)
+                    score = evaluate_policy(env, agent, turns = 10)
                     if opt.write:
                         writer.add_scalar('ep_r', score, global_step=total_steps)
                         writer.add_scalar('noise', agent.exp_noise, global_step=total_steps)
@@ -179,7 +145,7 @@ def main():
                         elapsed_time = time.time() - start_time
                         elapsed_minutes = elapsed_time / 60
                         writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
-                    print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score))
+                    print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score), 'time elapsed:', elapsed_minutes)
                 total_steps += 1
 
                 '''save model'''
