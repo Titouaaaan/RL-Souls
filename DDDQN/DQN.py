@@ -54,6 +54,10 @@ class DQN_agent(object):
 		self.q_target = copy.deepcopy(self.q_net)
 		# Freeze target networks with respect to optimizers (only update via polyak averaging)
 		for p in self.q_target.parameters(): p.requires_grad = False
+		
+		self.epsilon = kwargs.get('epsilon', 1.0)  
+		self.epsilon_decay = kwargs.get('epsilon_decay', 0.995)
+		self.epsilon_min = kwargs.get('epsilon_min', 0.01)
 
 
 	def select_action(self, state, deterministic):#only used when interact with the env
@@ -63,7 +67,7 @@ class DQN_agent(object):
 			if deterministic:
 				a = self.q_net(state).argmax().item()
 			else:
-				if np.random.rand() < self.exp_noise:
+				if np.random.rand() < self.epsilon:
 					a = np.random.randint(0,self.action_dim)
 				else:
 					a = self.q_net(state).argmax().item()
@@ -94,6 +98,8 @@ class DQN_agent(object):
 		# Update the frozen target models
 		for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
 			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+		
+		return q_loss.item()
 
 
 	def save(self,algo,EnvName,steps):
