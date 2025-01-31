@@ -1,7 +1,7 @@
 import numpy as np
 
 def evaluate_policy(env, agent, turns = 10):
-    print('--- Evaluating ---')
+    # print('--- Evaluating ---')
     total_scores = 0
     for j in range(turns):
         s, info = env.reset()
@@ -94,4 +94,4 @@ def compute_reward(game_state, next_game_state, hit_given_var=80, hit_taken_var=
     # Combine rewards and penalties
     total_reward = hit_reward + hit_taken_reward + move_reward + roll_penalty + death  + time_penalty
     #print(total_reward)
-    return total_reward
+    return total_reward / 100.0 # to avoid values that are too large

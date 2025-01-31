@@ -49,5 +49,15 @@ def test_model():
     
     demo_env.close()
 
-if __name__ == '__main__':
-    test_model()
+def env_test():
+    from soulsgym.envs.darksouls3.iudex import IudexEnv
+    env = IudexEnv(
+        game_speed=2,
+        phase=2,
+        init_pose_randomization=False
+    )
+    obs, info = env.reset()
+    terminated = False
+    while not terminated:
+        next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+    env.close()
