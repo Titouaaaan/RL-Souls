@@ -21,8 +21,8 @@ parser.add_argument('--Loadmodel', type=str2bool, default=False, help='Load pret
 parser.add_argument('--ModelIdex', type=int, default=100, help='which model to load')
 parser.add_argument('--CustomReward', type=str2bool, default=True, help='Use custom reward function for Iudex env')
 
-parser.add_argument('--hitGivenVar', type=int, default=80, help='reward multiplier for dealing damage')
-parser.add_argument('--hitTakenVar', type=int, default=90, help='reward multiplier for taking damage')
+parser.add_argument('--hitGivenVar', type=int, default=100, help='reward multiplier for dealing damage')
+parser.add_argument('--hitTakenVar', type=int, default=60, help='reward multiplier for taking damage')
 parser.add_argument('--rollPenalty', type=float, default=-0.05, help='roll penalty value')
 parser.add_argument('--timePenalty', type=float, default=0.0, help='penalty for stalling (stay alive too long)')
 parser.add_argument('--deathPenalty', type=int, default=0, help='penalty for dying (experimental)')
@@ -32,6 +32,7 @@ parser.add_argument('--seed', type=int, default=0, help='random seed')
 parser.add_argument('--Max_train_steps', type=int, default=int(1e10), help='Max training steps')
 parser.add_argument('--save_interval', type=int, default=int(50e3), help='Model saving interval, in steps.')
 parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
+parser.add_argument('--eval_turns', type=int, default=2, help='How many episodes for eval')
 parser.add_argument('--random_steps', type=int, default=int(3e3), help='steps for random policy to explore')
 parser.add_argument('--update_every', type=int, default=50, help='training frequency')
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
@@ -45,6 +46,8 @@ parser.add_argument('--epsilon_decay', type=float, default=0.995, help='decay ra
 parser.add_argument('--epsilon_min', type=float, default=0.01, help='min value for e greedy eps value')
 parser.add_argument('--Double', type=str2bool, default=True, help='Whether to use Double Q-learning')
 parser.add_argument('--Duel', type=str2bool, default=True, help='Whether to use Duel networks')
+
+parser.add_argument('--debugging', type=str2bool, default=False, help='Whether to print values during training for debugging')
 opt = parser.parse_args()
 opt.dvc = torch.device(opt.dvc) # from str to torch.device
 print(opt)
@@ -89,20 +92,19 @@ def main():
             )
         
         IudexEnv.compute_reward = staticmethod(reward_wrapper)
-
-        """ IudexEnv.compute_reward = staticmethod(compute_reward(
-            hit_given_var=opt.hitGivenVar, 
-            hit_taken_var=opt.hitTakenVar, 
-            roll_penalty_var=opt.rollPenalty, 
-            time_penalty_var=opt.timePenalty, 
-            death_var=opt.deathPenalty, 
-            move_reward_var=opt.moveReward)) """
-
+    
+    # Wanted to try this to change phase and game speed but when i do this the agent behaves in a very weird way
+    # Agent starts stuttering and acting very differently and idk why
+    """ env = IudexEnv(
+        game_speed=4,
+        phase=1,
+        init_pose_randomization=False
+    ) """
     env = gym.make(EnvName[opt.EnvIdex])
     env = PreprocessedEnvWrapper(env, flatten_observation)
     opt.state_dim = 26 # env.observation_space.shape[0] # PLEASE FIX THIS LATER
     opt.action_dim = env.action_space.n
-    opt.max_e_steps = env._max_episode_steps
+    opt.max_e_steps = env._max_episode_steps # remopve this in case we use the IudexEnv() method above (change line 129 too)
 
     #Algorithm Setting
     if opt.Duel: algo_name = 'Duel'
@@ -119,7 +121,7 @@ def main():
     print("Random Seed: {}".format(opt.seed))
 
     print('Algorithm:',algo_name,'  Env:',BriefEnvName[opt.EnvIdex],'  state_dim:',opt.state_dim,
-          '  action_dim:',opt.action_dim,'  Random Seed:',opt.seed, '  max_e_steps:',opt.max_e_steps, '\n')
+          '  action_dim:',opt.action_dim,'  Random Seed:',opt.seed, ' max_e_steps:', opt.max_e_steps,'\n') # remove in case of env creation change
 
     if opt.write:
         from torch.utils.tensorboard import SummaryWriter
@@ -168,15 +170,20 @@ def main():
                 agent.replay_buffer.add(s, a, r, s_next, dw)
                 s = s_next
 
+                """ if opt.debugging:
+                    print('reward: ', r) """
+
                 '''Update'''
                 # train 50 times every 50 steps rather than 1 training per step. Better!
                 if total_steps >= opt.random_steps and total_steps % opt.update_every == 0:
-                    # print('--- Training ---')
                     total_loss = 0.0
                     for j in range(opt.update_every): 
                         loss = agent.train()
                         total_loss += loss
                     avg_loss = total_loss / opt.update_every
+
+                    if opt.debugging:
+                        print('Avg loss of training: ', avg_loss)
 
                     if opt.write:
                         writer.add_scalar('loss', avg_loss, total_steps)
@@ -185,7 +192,7 @@ def main():
                 if total_steps % opt.eps_decay_rate == 0: 
                     agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
                 if total_steps % opt.eval_interval == 0:
-                    score = evaluate_policy(env, agent, turns = 20)
+                    score = evaluate_policy(env, agent, turns = opt.eval_turns)
                     if opt.write:
                         writer.add_scalar('ep_r', score, global_step=total_steps)
                         writer.add_scalar('noise', agent.epsilon, global_step=total_steps)
@@ -196,9 +203,13 @@ def main():
                     print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score), 'time elapsed:', elapsed_minutes)
                 total_steps += 1
 
+                if total_steps % 5000 == 0:
+                    agent.q_target.load_state_dict(agent.q_net.state_dict())
+
                 '''save model'''
                 if total_steps % opt.save_interval == 0:
-                    print('--- Saving model ---')
+                    if opt.debugging: 
+                        print('--- Saving model ---')
                     agent.save(algo_name,BriefEnvName[opt.EnvIdex],int(total_steps/1000))
     env.close()
 

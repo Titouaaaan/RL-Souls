@@ -3,7 +3,6 @@ import torch.nn as nn
 import numpy as np
 import torch
 import copy
-from utils import flatten_observation
 
 
 def build_net(layer_shape, activation, output_activation):
@@ -54,10 +53,11 @@ class DQN_agent(object):
 		self.q_target = copy.deepcopy(self.q_net)
 		# Freeze target networks with respect to optimizers (only update via polyak averaging)
 		for p in self.q_target.parameters(): p.requires_grad = False
-		
+
 		self.epsilon = kwargs.get('epsilon', 1.0)  
 		self.epsilon_decay = kwargs.get('epsilon_decay', 0.995)
 		self.epsilon_min = kwargs.get('epsilon_min', 0.01)
+		self.debugging = kwargs.get('debugging')
 
 
 	def select_action(self, state, deterministic):#only used when interact with the env
@@ -90,14 +90,23 @@ class DQN_agent(object):
 		current_q = self.q_net(s)
 		current_q_a = current_q.gather(1,a)
 
+		print('Q-Value: ', current_q_a)
+
 		q_loss = F.mse_loss(current_q_a, target_Q)
 		self.q_net_optimizer.zero_grad()
 		q_loss.backward()
+
+		if self.debugging:
+			print(f"Initial Q-values mean: {current_q_a.mean().item()}, min: {current_q_a.min().item()}, max: {current_q_a.max().item()}")
+			print(f"Target Q-values mean: {target_Q.mean().item()}, min: {target_Q.min().item()}, max: {target_Q.max().item()}")
+			print(f"Gradient Mean: {sum(p.grad.abs().mean().item() for p in self.q_net.parameters() if p.grad is not None) / len(list(self.q_net.parameters()))}")
+
+		torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
 		self.q_net_optimizer.step()
 
-		# Update the frozen target models
+		""" # Update the frozen target models (OLD METHOD)
 		for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
-			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data) """
 		
 		return q_loss.item()
 
