@@ -22,8 +22,8 @@ parser.add_argument('--ModelIdex', type=int, default=100, help='which model to l
 parser.add_argument('--CustomReward', type=str2bool, default=True, help='Use custom reward function for Iudex env')
 
 parser.add_argument('--hitGivenVar', type=int, default=100, help='reward multiplier for dealing damage')
-parser.add_argument('--hitTakenVar', type=int, default=60, help='reward multiplier for taking damage')
-parser.add_argument('--rollPenalty', type=float, default=-0.05, help='roll penalty value')
+parser.add_argument('--hitTakenVar', type=int, default=50, help='reward multiplier for taking damage')
+parser.add_argument('--rollPenalty', type=float, default=-1, help='roll penalty value')
 parser.add_argument('--timePenalty', type=float, default=0.0, help='penalty for stalling (stay alive too long)')
 parser.add_argument('--deathPenalty', type=int, default=0, help='penalty for dying (experimental)')
 parser.add_argument('--moveReward', type=float, default=0.5, help='reward for moving to center of arena (experimental)')
@@ -32,17 +32,17 @@ parser.add_argument('--seed', type=int, default=0, help='random seed')
 parser.add_argument('--Max_train_steps', type=int, default=int(1e10), help='Max training steps')
 parser.add_argument('--save_interval', type=int, default=int(50e3), help='Model saving interval, in steps.')
 parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
-parser.add_argument('--eval_turns', type=int, default=2, help='How many episodes for eval')
-parser.add_argument('--random_steps', type=int, default=int(3e3), help='steps for random policy to explore')
-parser.add_argument('--update_every', type=int, default=50, help='training frequency')
+parser.add_argument('--eval_turns', type=int, default=3, help='How many episodes for eval')
+parser.add_argument('--random_steps', type=int, default=int(5e3), help='steps for random policy to explore')
+parser.add_argument('--update_every', type=int, default=40, help='training frequency')
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
 
 parser.add_argument('--gamma', type=float, default=0.99, help='Discounted Factor')
 parser.add_argument('--net_width', type=int, default=200, help='Hidden net width')
 parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-parser.add_argument('--batch_size', type=int, default=256, help='lenth of sliced trajectory')
+parser.add_argument('--batch_size', type=int, default=512, help='lenth of sliced trajectory')
 parser.add_argument('--epsilon', type=float, default=1.0, help='eps for e greedy strategy')
-parser.add_argument('--epsilon_decay', type=float, default=0.995, help='decay rate of exploration')
+parser.add_argument('--epsilon_decay', type=float, default=0.99, help='decay rate of exploration')
 parser.add_argument('--epsilon_min', type=float, default=0.01, help='min value for e greedy eps value')
 parser.add_argument('--Double', type=str2bool, default=True, help='Whether to use Double Q-learning')
 parser.add_argument('--Duel', type=str2bool, default=True, help='Whether to use Duel networks')
@@ -75,7 +75,7 @@ class PreprocessedEnvWrapper(gym.Wrapper):
 
 def main():
     EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
-    BriefEnvName = ['Iudex-v0.2'] 
+    BriefEnvName = ['Iudex-v0.3'] 
 
     if opt.CustomReward:
         # wrapper to add our new parameters to the reward function while still being able to access the game state and next game state
@@ -174,7 +174,6 @@ def main():
                     print('reward: ', r) """
 
                 '''Update'''
-                # train 50 times every 50 steps rather than 1 training per step. Better!
                 if total_steps >= opt.random_steps and total_steps % opt.update_every == 0:
                     total_loss = 0.0
                     for j in range(opt.update_every): 
@@ -182,8 +181,8 @@ def main():
                         total_loss += loss
                     avg_loss = total_loss / opt.update_every
 
-                    if opt.debugging:
-                        print('Avg loss of training: ', avg_loss)
+                    # if opt.debugging:
+                    # print('Avg loss of training: ', avg_loss)
 
                     if opt.write:
                         writer.add_scalar('loss', avg_loss, total_steps)

@@ -67,11 +67,12 @@ def compute_reward(game_state, next_game_state, hit_given_var=80, hit_taken_var=
     # Reward for hitting the boss
     boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
     hit_reward = hit_given_var * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
-    #print('hit reward', hit_reward)
+    # if hit_reward != 0: print('hit reward', hit_reward)
 
     # Negative Reward for getting hit
     player_hp_diff = next_game_state.player_hp - game_state.player_hp
     hit_taken_reward = hit_taken_var * (player_hp_diff / game_state.player_max_hp)  
+    #if hit_taken_reward != 0: print('hit reward', hit_taken_reward)
 
     # Penalty for rolling
     # print(game_state.player_animation)
@@ -93,5 +94,7 @@ def compute_reward(game_state, next_game_state, hit_given_var=80, hit_taken_var=
     # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_reward}')
     # Combine rewards and penalties
     total_reward = hit_reward + hit_taken_reward + move_reward + roll_penalty + death  + time_penalty
+    # print(f'hit_reward: {hit_reward} \nhit_taken_reward: {hit_taken_reward} \nmove_reward: {move_reward} \nroll_penalty: {roll_penalty} \ndeath: {death} \ntime_penalty: {time_penalty}')
+    # print('total: ', total_reward)
     #print(total_reward)
-    return total_reward / 100.0 # to avoid values that are too large
+    return total_reward # maybe divide by large num lke 100 if rewards are too big or too small

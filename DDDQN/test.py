@@ -4,6 +4,7 @@ import gymnasium as gym
 import torch
 from DQN import DQN_agent
 import soulsgym
+import yaml
 
 def test_model():
     # 1. Create Demo Environment
@@ -24,9 +25,12 @@ def test_model():
     agent = DQN_agent(**test_args)
     
     # 3. Load Trained Model
-    model_path = "model\DuelDDQN_IudexSimpleReward_1150.pth"  # Update this path
+    model_path = "model\DuelDDQN_Iudex-v0.3_1500.pth"  # Update this path
     agent.q_net.load_state_dict(torch.load(model_path, map_location=test_args['dvc'], weights_only=True))
     agent.q_net.eval()  # Set to evaluation mode
+    file = r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml"
+    with open(file, "r") as file:
+        action_mapping = yaml.safe_load(file)
     
     # 4. Test 
     for episode in range(5):  # Run 5 episodes for testing
@@ -37,7 +41,8 @@ def test_model():
         while not done:            
             # Get action from policy (deterministic for testing)
             action = agent.select_action(state, deterministic=True)
-            
+            action_name = " + ".join(action_mapping.get(action, ["Unknown Action"]))
+            print('action: ', action_name)
             # Take step
             next_state, reward, terminated, truncated, _ = demo_env.step(action)
             done = terminated or truncated
@@ -61,3 +66,5 @@ def env_test():
     while not terminated:
         next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
     env.close()
+
+test_model()

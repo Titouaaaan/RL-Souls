@@ -90,16 +90,16 @@ class DQN_agent(object):
 		current_q = self.q_net(s)
 		current_q_a = current_q.gather(1,a)
 
-		print('Q-Value: ', current_q_a)
+		# print('Q-Value: ', current_q_a)
 
 		q_loss = F.mse_loss(current_q_a, target_Q)
 		self.q_net_optimizer.zero_grad()
 		q_loss.backward()
 
-		if self.debugging:
+		""" if self.debugging:
 			print(f"Initial Q-values mean: {current_q_a.mean().item()}, min: {current_q_a.min().item()}, max: {current_q_a.max().item()}")
 			print(f"Target Q-values mean: {target_Q.mean().item()}, min: {target_Q.min().item()}, max: {target_Q.max().item()}")
-			print(f"Gradient Mean: {sum(p.grad.abs().mean().item() for p in self.q_net.parameters() if p.grad is not None) / len(list(self.q_net.parameters()))}")
+			print(f"Gradient Mean: {sum(p.grad.abs().mean().item() for p in self.q_net.parameters() if p.grad is not None) / len(list(self.q_net.parameters()))}") """
 
 		torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
 		self.q_net_optimizer.step()
