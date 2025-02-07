@@ -16,14 +16,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dvc', type=str, default='cuda', help='running device: cuda or cpu')
 parser.add_argument('--EnvIdex', type=int, default=0, help='Iudex')
 parser.add_argument('--write', type=str2bool, default=True, help='Use SummaryWriter to record the training, see with tensorboard --logdir=runs')
-parser.add_argument('--render', type=str2bool, default=False, help='Render or Not')
 parser.add_argument('--Loadmodel', type=str2bool, default=False, help='Load pretrained model or Not')
-parser.add_argument('--ModelIdex', type=int, default=100, help='which model to load')
 parser.add_argument('--CustomReward', type=str2bool, default=True, help='Use custom reward function for Iudex env')
 
-parser.add_argument('--hitGivenVar', type=int, default=100, help='reward multiplier for dealing damage')
+parser.add_argument('--hitGivenVar', type=int, default=50, help='reward multiplier for dealing damage')
 parser.add_argument('--hitTakenVar', type=int, default=50, help='reward multiplier for taking damage')
-parser.add_argument('--rollPenalty', type=float, default=-1, help='roll penalty value')
+parser.add_argument('--rollPenalty', type=float, default=-0.5, help='roll penalty value')
 parser.add_argument('--timePenalty', type=float, default=0.0, help='penalty for stalling (stay alive too long)')
 parser.add_argument('--deathPenalty', type=int, default=0, help='penalty for dying (experimental)')
 parser.add_argument('--moveReward', type=float, default=0.5, help='reward for moving to center of arena (experimental)')
@@ -38,11 +36,11 @@ parser.add_argument('--update_every', type=int, default=40, help='training frequ
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
 
 parser.add_argument('--gamma', type=float, default=0.99, help='Discounted Factor')
-parser.add_argument('--net_width', type=int, default=200, help='Hidden net width')
-parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-parser.add_argument('--batch_size', type=int, default=512, help='lenth of sliced trajectory')
+parser.add_argument('--net_width', type=int, default=128, help='Hidden net width')
+parser.add_argument('--lr', type=float, default=3e-5, help='Learning rate')
+parser.add_argument('--batch_size', type=int, default=256, help='lenth of sliced trajectory')
 parser.add_argument('--epsilon', type=float, default=1.0, help='eps for e greedy strategy')
-parser.add_argument('--epsilon_decay', type=float, default=0.99, help='decay rate of exploration')
+parser.add_argument('--epsilon_decay', type=float, default=0.995, help='decay rate of exploration')
 parser.add_argument('--epsilon_min', type=float, default=0.01, help='min value for e greedy eps value')
 parser.add_argument('--Double', type=str2bool, default=True, help='Whether to use Double Q-learning')
 parser.add_argument('--Duel', type=str2bool, default=True, help='Whether to use Duel networks')
@@ -75,7 +73,7 @@ class PreprocessedEnvWrapper(gym.Wrapper):
 
 def main():
     EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
-    BriefEnvName = ['Iudex-v0.3'] 
+    BriefEnvName = ['Iudex-v1.0'] 
 
     if opt.CustomReward:
         # wrapper to add our new parameters to the reward function while still being able to access the game state and next game state
@@ -144,72 +142,86 @@ def main():
     #Build model and replay buffer
     if not os.path.exists('model'): os.mkdir('model')
     agent = DQN_agent(**vars(opt))
-    if opt.Loadmodel: agent.load(algo_name,BriefEnvName[opt.EnvIdex],opt.ModelIdex)
-
-    if opt.render:
-        while True:
-            score = evaluate_policy(env, agent, 1)
-            print('EnvName:', BriefEnvName[opt.EnvIdex], 'seed:', opt.seed, 'score:', score)
+    if opt.Loadmodel: 
+        ''' CHANGE MODEL HERE IF NEEDED '''
+        print('Loading model')
+        load_algo_name = 'DuelDDQN'
+        load_env_name = 'Iudex-v1.0'
+        resumed_steps = agent.load(load_algo_name, load_env_name, checkpoint=True)
+        agent.replay_buffer.load(f"./model/{load_algo_name}_{load_env_name}_replaybuf.pth")
+        total_steps = resumed_steps
+        print(f'Resuming at step: {total_steps}')
     else:
-        start_time = time.time()
+        print('Training model from scratch')
         total_steps = 0
-        while total_steps < opt.Max_train_steps:
-            s, info = env.reset(seed=env_seed) # Do not use opt.seed directly, or it can overfit to opt.seed
-            env_seed += 1
-            done = False
+        """ agent.save(algo_name, BriefEnvName[opt.EnvIdex], checkpoint=True)
+        agent.replay_buffer.save(f"./model/{algo_name}_{BriefEnvName[opt.EnvIdex]}_replaybuf.pth") """
 
-            '''Interact & trian'''
-            while not done:
-                #e-greedy exploration
-                if total_steps < opt.random_steps: a = env.action_space.sample()
-                else: a = agent.select_action(s, deterministic=False)
-                
-                s_next, r, dw, tr, info = env.step(a) # dw: dead&win; tr: truncated
-                done = (dw or tr)
+    start_time = time.time()
+    while total_steps < opt.Max_train_steps:
+        s, info = env.reset(seed=env_seed) # Do not use opt.seed directly, or it can overfit to opt.seed
+        env_seed += 1
+        done = False
 
-                agent.replay_buffer.add(s, a, r, s_next, dw)
-                s = s_next
+        '''Interact & trian'''
+        while not done:
+            #e-greedy exploration
+            if total_steps < opt.random_steps: a = env.action_space.sample()
+            else: a = agent.select_action(s, deterministic=False)
+            
+            s_next, r, dw, tr, info = env.step(a) # dw: dead&win; tr: truncated
+            done = (dw or tr)
 
-                """ if opt.debugging:
-                    print('reward: ', r) """
+            agent.replay_buffer.add(s, a, r, s_next, dw)
+            s = s_next
 
-                '''Update'''
-                if total_steps >= opt.random_steps and total_steps % opt.update_every == 0:
-                    total_loss = 0.0
-                    for j in range(opt.update_every): 
-                        loss = agent.train()
-                        total_loss += loss
-                    avg_loss = total_loss / opt.update_every
+            """ if opt.debugging:
+                print('reward: ', r) """
 
-                    # if opt.debugging:
-                    # print('Avg loss of training: ', avg_loss)
+            '''Update'''
+            if total_steps >= opt.random_steps and total_steps % opt.update_every == 0:
+                total_loss = 0.0
+                for j in range(opt.update_every): 
+                    loss = agent.train()
+                    total_loss += loss
+                avg_loss = total_loss / opt.update_every
 
-                    if opt.write:
-                        writer.add_scalar('loss', avg_loss, total_steps)
+                # if opt.debugging:
+                # print('Avg loss of training: ', avg_loss)
 
-                '''Epsilon decay & Record & Log'''
-                if total_steps % opt.eps_decay_rate == 0: 
-                    agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
-                if total_steps % opt.eval_interval == 0:
-                    score = evaluate_policy(env, agent, turns = opt.eval_turns)
-                    if opt.write:
-                        writer.add_scalar('ep_r', score, global_step=total_steps)
-                        writer.add_scalar('noise', agent.epsilon, global_step=total_steps)
+                if opt.write:
+                    writer.add_scalar('loss', avg_loss, total_steps)
 
-                        elapsed_time = time.time() - start_time
-                        elapsed_minutes = elapsed_time / 60
-                        writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
-                    print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score), 'time elapsed:', elapsed_minutes)
-                total_steps += 1
+            '''Epsilon decay & Record & Log'''
+            ''' Move this to after every episode?'''
+            """ if total_steps % opt.eps_decay_rate == 0: 
+                agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)  """
 
-                if total_steps % 5000 == 0:
-                    agent.q_target.load_state_dict(agent.q_net.state_dict())
+            if total_steps % opt.eval_interval == 0:
+                score = evaluate_policy(env, agent, turns = opt.eval_turns)
+                if opt.write:
+                    writer.add_scalar('ep_r', score, global_step=total_steps)
+                    writer.add_scalar('noise', agent.epsilon, global_step=total_steps)
 
-                '''save model'''
-                if total_steps % opt.save_interval == 0:
-                    if opt.debugging: 
-                        print('--- Saving model ---')
-                    agent.save(algo_name,BriefEnvName[opt.EnvIdex],int(total_steps/1000))
+                    elapsed_time = time.time() - start_time
+                    elapsed_minutes = elapsed_time / 60
+                    writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
+                print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score), 'time elapsed:', elapsed_minutes)
+            total_steps += 1
+
+            """ if total_steps % 5000 == 0:
+                agent.q_target.load_state_dict(agent.q_net.state_dict()) """
+
+            '''save model'''
+            if total_steps % opt.save_interval == 0:
+                if opt.debugging: 
+                    print('--- Saving model ---')
+                agent.save(algo_name, BriefEnvName[opt.EnvIdex], steps=total_steps, checkpoint=True)
+                agent.replay_buffer.save(f"./model/{algo_name}_{BriefEnvName[opt.EnvIdex]}_replaybuf.pth")
+
+        # Epsilon decay after episodes instead of steps?
+        agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
+
     env.close()
 
 if __name__ == '__main__':

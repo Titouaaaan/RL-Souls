@@ -104,19 +104,39 @@ class DQN_agent(object):
 		torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
 		self.q_net_optimizer.step()
 
-		""" # Update the frozen target models (OLD METHOD)
+		# Update the frozen target models 
 		for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
-			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data) """
+			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
 		
 		return q_loss.item()
 
 
-	def save(self,algo,EnvName,steps):
-		torch.save(self.q_net.state_dict(), "./model/{}_{}_{}.pth".format(algo,EnvName,steps))
+	def save(self, algo, EnvName, steps, checkpoint=True):
+		if checkpoint:
+			save_dict = {
+				'q_net_state_dict': self.q_net.state_dict(),
+				'q_target_state_dict': self.q_target.state_dict(),
+				'optimizer_state_dict': self.q_net_optimizer.state_dict(),
+				'epsilon': self.epsilon,
+				'steps': steps,
+			}
+			torch.save(save_dict, f"./model/{algo}_{EnvName}_checkpoint.pth")
+		else:
+			# Save final model (for deployment)
+			torch.save(self.q_net.state_dict(), f"./model/{algo}_{EnvName}.pth")
 
-	def load(self,algo,EnvName,steps):
-		self.q_net.load_state_dict(torch.load("./model/{}_{}_{}.pth".format(algo,EnvName,steps),map_location=self.dvc))
-		self.q_target.load_state_dict(torch.load("./model/{}_{}_{}.pth".format(algo,EnvName,steps),map_location=self.dvc))
+	def load(self, algo, EnvName, checkpoint=True):
+		if checkpoint:
+			checkpoint = torch.load(f"./model/{algo}_{EnvName}_checkpoint.pth", map_location=self.dvc, weights_only=True)
+			self.q_net.load_state_dict(checkpoint['q_net_state_dict'])
+			self.q_target.load_state_dict(checkpoint['q_target_state_dict'])
+			self.q_net_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+			self.epsilon = checkpoint['epsilon']
+			return checkpoint['steps']  # Return 0 if 'steps' key is missing
+		else:
+			self.q_net.load_state_dict(torch.load(f"./model/{algo}_{EnvName}.pth", map_location=self.dvc))
+			self.q_target.load_state_dict(torch.load(f"./model/{algo}_{EnvName}.pth", map_location=self.dvc))
+			return 0
 
 
 class ReplayBuffer(object):
@@ -145,6 +165,26 @@ class ReplayBuffer(object):
 	def sample(self, batch_size):
 		ind = torch.randint(0, self.size, device=self.dvc, size=(batch_size,))
 		return self.s[ind], self.a[ind], self.r[ind], self.s_next[ind], self.dw[ind]
+	
+	def save(self, path):
+		save_dict = {
+			's': self.s,
+            'a': self.a,
+            'r': self.r,
+            's_next': self.s_next,
+            'dw': self.dw,
+            'ptr': self.ptr,
+            'size': self.size
+		}
+		torch.save(save_dict, path)
 
-
-
+	def load(self, path):
+		data = torch.load(path, map_location=self.dvc, weights_only=True)
+		self.s = data['s']
+		self.a = data['a']
+		self.r = data['r']
+		self.s_next = data['s_next']
+		self.dw = data['dw']
+		self.ptr = data['ptr']
+		self.size = data['size']
+        
