@@ -98,3 +98,28 @@ def compute_reward(game_state, next_game_state, hit_given_var=80, hit_taken_var=
     # print('total: ', total_reward)
     #print(total_reward)
     return total_reward # maybe divide by large num lke 100 if rewards are too big or too small
+
+def compute_reward_basic(game_state, next_game_state) -> float:
+        """Compute the reward from the current game state and the next game state.
+
+        Args:
+            game_state: The game state before the step.
+            next_game_state: The game state after the step.
+
+        Returns:
+            The reward for the provided game states.
+        """
+        boss_reward = 2 * ((game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp)
+        player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
+        player_reward = player_hp_diff / game_state.player_max_hp
+        if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
+            base_reward = 10 if next_game_state.boss_hp == 0 else -1
+        else:
+            # Experimental: Reward for moving towards the arena center, no reward within 4m distance
+            d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
+            d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
+            base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
+        """ if boss_reward != 0 or player_reward != 0:
+            print(f'Boss dmg reward: {boss_reward}')
+            print(f'Getting hit reward (penalty): {player_reward}') """
+        return (boss_reward + player_reward + base_reward) * 2 # scale it up
