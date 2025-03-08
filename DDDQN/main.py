@@ -1,4 +1,4 @@
-from utils import evaluate_policy, str2bool, flatten_observation, compute_reward
+from utils import evaluate_policy, str2bool, flatten_observation, compute_reward, compute_reward_basic
 from datetime import datetime
 import time
 from soulsgym.envs.darksouls3.iudex import IudexEnv
@@ -10,7 +10,7 @@ import argparse
 import torch
 import soulsgym
 
-
+print(f'CUDA available: {torch.cuda.is_available()}')
 '''Hyperparameter Setting'''
 parser = argparse.ArgumentParser()
 parser.add_argument('--dvc', type=str, default='cuda', help='running device: cuda or cpu')
@@ -28,27 +28,26 @@ parser.add_argument('--moveReward', type=float, default=0.5, help='reward for mo
 
 parser.add_argument('--seed', type=int, default=0, help='random seed')
 parser.add_argument('--Max_train_steps', type=int, default=int(1e10), help='Max training steps')
-parser.add_argument('--save_interval', type=int, default=int(50e3), help='Model saving interval, in steps.')
+parser.add_argument('--save_interval', type=int, default=int(1e4), help='Model saving interval, in steps.')
 parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
 parser.add_argument('--eval_turns', type=int, default=3, help='How many episodes for eval')
-parser.add_argument('--random_steps', type=int, default=int(5e3), help='steps for random policy to explore')
-parser.add_argument('--update_every', type=int, default=40, help='training frequency')
+parser.add_argument('--random_steps', type=int, default=int(5e4), help='steps for random policy to explore')
+parser.add_argument('--update_every', type=int, default=100, help='training frequency')
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
 
 parser.add_argument('--gamma', type=float, default=0.99, help='Discounted Factor')
 parser.add_argument('--net_width', type=int, default=128, help='Hidden net width')
-parser.add_argument('--lr', type=float, default=3e-5, help='Learning rate')
+parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
 parser.add_argument('--batch_size', type=int, default=256, help='lenth of sliced trajectory')
 parser.add_argument('--epsilon', type=float, default=1.0, help='eps for e greedy strategy')
-parser.add_argument('--epsilon_decay', type=float, default=0.995, help='decay rate of exploration')
-parser.add_argument('--epsilon_min', type=float, default=0.01, help='min value for e greedy eps value')
+parser.add_argument('--epsilon_decay', type=float, default=0.998, help='decay rate of exploration')
+parser.add_argument('--epsilon_min', type=float, default=0.1, help='min value for e greedy eps value')
 parser.add_argument('--Double', type=str2bool, default=True, help='Whether to use Double Q-learning')
 parser.add_argument('--Duel', type=str2bool, default=True, help='Whether to use Duel networks')
 
 parser.add_argument('--debugging', type=str2bool, default=False, help='Whether to print values during training for debugging')
 opt = parser.parse_args()
 opt.dvc = torch.device(opt.dvc) # from str to torch.device
-print(opt)
 
 class PreprocessedEnvWrapper(gym.Wrapper):
     def __init__(self, env, preprocess_func):
@@ -73,11 +72,15 @@ class PreprocessedEnvWrapper(gym.Wrapper):
 
 def main():
     EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
-    BriefEnvName = ['Iudex-v1.0'] 
+    BriefEnvName = ['Iudex-v1.4-basic-reward'] #
 
     if opt.CustomReward:
         # wrapper to add our new parameters to the reward function while still being able to access the game state and next game state
         def reward_wrapper(game_state, next_game_state):
+            return compute_reward_basic(
+                game_state=game_state,
+                next_game_state=next_game_state
+            )
             return compute_reward(
                 game_state,
                 next_game_state,
@@ -157,6 +160,7 @@ def main():
         """ agent.save(algo_name, BriefEnvName[opt.EnvIdex], checkpoint=True)
         agent.replay_buffer.save(f"./model/{algo_name}_{BriefEnvName[opt.EnvIdex]}_replaybuf.pth") """
 
+    print(opt)
     start_time = time.time()
     while total_steps < opt.Max_train_steps:
         s, info = env.reset(seed=env_seed) # Do not use opt.seed directly, or it can overfit to opt.seed
@@ -206,8 +210,8 @@ def main():
                     elapsed_time = time.time() - start_time
                     elapsed_minutes = elapsed_time / 60
                     writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
-                print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', int(score), 'time elapsed:', elapsed_minutes)
-            total_steps += 1
+                print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', score, 'time elapsed:', elapsed_minutes)
+            
 
             """ if total_steps % 5000 == 0:
                 agent.q_target.load_state_dict(agent.q_net.state_dict()) """
@@ -218,6 +222,7 @@ def main():
                     print('--- Saving model ---')
                 agent.save(algo_name, BriefEnvName[opt.EnvIdex], steps=total_steps, checkpoint=True)
                 agent.replay_buffer.save(f"./model/{algo_name}_{BriefEnvName[opt.EnvIdex]}_replaybuf.pth")
+            total_steps += 1
 
         # Epsilon decay after episodes instead of steps?
         agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)

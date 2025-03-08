@@ -15,7 +15,7 @@ def evaluate_policy(env, agent, turns = 10):
             total_scores += r
             s = s_next
     env.reset()
-    return int(total_scores/turns)
+    return total_scores/turns
 
 
 #You can just ignore this funciton. Is not related to the RL.

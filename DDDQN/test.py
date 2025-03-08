@@ -1,10 +1,12 @@
-from utils import flatten_observation, compute_reward
+from utils import flatten_observation, str2bool
 from main import PreprocessedEnvWrapper
 import gymnasium as gym
 import torch
 from DQN import DQN_agent
 import soulsgym
 import yaml
+from main import opt
+import argparse
 
 def test_model():
     # 1. Create Demo Environment
@@ -22,11 +24,10 @@ def test_model():
         'Duel': True
     }
     
-    agent = DQN_agent(**test_args)
+    agent = DQN_agent(**vars(opt))
     
     # 3. Load Trained Model
-    model_path = "model\DuelDDQN_Iudex-v0.3_1500.pth"  # Update this path
-    agent.q_net.load_state_dict(torch.load(model_path, map_location=test_args['dvc'], weights_only=True))
+    agent.load(algo='DuelDDQN', EnvName='Iudex-v1.4-basic-reward')
     agent.q_net.eval()  # Set to evaluation mode
     file = r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml"
     with open(file, "r") as file:
