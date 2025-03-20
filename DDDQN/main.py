@@ -9,6 +9,7 @@ import os, shutil
 import argparse
 import torch
 import soulsgym
+import yaml
 
 print(f'CUDA available: {torch.cuda.is_available()}')
 '''Hyperparameter Setting'''
@@ -32,18 +33,20 @@ parser.add_argument('--save_interval', type=int, default=int(1e4), help='Model s
 parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
 parser.add_argument('--eval_turns', type=int, default=3, help='How many episodes for eval')
 parser.add_argument('--random_steps', type=int, default=int(5e4), help='steps for random policy to explore')
-parser.add_argument('--update_every', type=int, default=100, help='training frequency')
+parser.add_argument('--update_every', type=int, default=1000, help='training frequency')
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
 
 parser.add_argument('--gamma', type=float, default=0.99, help='Discounted Factor')
 parser.add_argument('--net_width', type=int, default=128, help='Hidden net width')
 parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-parser.add_argument('--batch_size', type=int, default=256, help='lenth of sliced trajectory')
+parser.add_argument('--batch_size', type=int, default=400, help='lenth of sliced trajectory')
 parser.add_argument('--epsilon', type=float, default=1.0, help='eps for e greedy strategy')
-parser.add_argument('--epsilon_decay', type=float, default=0.998, help='decay rate of exploration')
+parser.add_argument('--epsilon_decay', type=float, default=0.999, help='decay rate of exploration')
 parser.add_argument('--epsilon_min', type=float, default=0.1, help='min value for e greedy eps value')
+
 parser.add_argument('--Double', type=str2bool, default=True, help='Whether to use Double Q-learning')
 parser.add_argument('--Duel', type=str2bool, default=True, help='Whether to use Duel networks')
+parser.add_argument('--Enhanced', type=str2bool, default=True, help='Whether to use Enhanced Duel networks')
 
 parser.add_argument('--debugging', type=str2bool, default=False, help='Whether to print values during training for debugging')
 opt = parser.parse_args()
@@ -72,7 +75,7 @@ class PreprocessedEnvWrapper(gym.Wrapper):
 
 def main():
     EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
-    BriefEnvName = ['Iudex-v1.4-basic-reward'] #
+    BriefEnvName = ['Iudex-v2.1-redAS-newNet'] #
 
     if opt.CustomReward:
         # wrapper to add our new parameters to the reward function while still being able to access the game state and next game state
@@ -102,6 +105,21 @@ def main():
         init_pose_randomization=False
     ) """
     env = gym.make(EnvName[opt.EnvIdex])
+
+    new_action_space = {
+        0: ['forward'], 1: ['forward', 'right'], 2: ['right'], 3: ['right', 'backward'], 4: ['backward'], 
+        5: ['backward', 'left'], 6: ['left'], 7: ['left', 'forward'], 8: ['forward', 'roll'],  
+        9: ['right', 'roll'], 10: ['backward', 'roll'],  11: ['left', 'roll'], 
+         12: ['lightattack'], 13: ['heavyattack'], 14: ['parry'], 15: []}
+    
+    # REPLACE WITH YOUR OWN VENV PATH THIS IS ONLY TEMPORARY 
+    # I KNOW IT LOOKS HORRIBLE BUT I WILL CHANGE IT LATER
+    with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", 'w') as file:
+        yaml.dump(new_action_space, file, default_flow_style=False)
+
+    #env.action_space = new_action_space
+    env.action_space = gym.spaces.Discrete(15)
+
     env = PreprocessedEnvWrapper(env, flatten_observation)
     opt.state_dim = 26 # env.observation_space.shape[0] # PLEASE FIX THIS LATER
     opt.action_dim = env.action_space.n
@@ -110,6 +128,7 @@ def main():
     #Algorithm Setting
     if opt.Duel: algo_name = 'Duel'
     else: algo_name = ''
+    if opt.Enhanced: algo_name += 'Enhanced'
     if opt.Double: algo_name += 'DDQN'
     else: algo_name += 'DQN'
 
@@ -210,7 +229,14 @@ def main():
                     elapsed_time = time.time() - start_time
                     elapsed_minutes = elapsed_time / 60
                     writer.add_scalar('Time/Elapsed_Minutes', elapsed_minutes, global_step=total_steps)
-                print('EnvName:',BriefEnvName[opt.EnvIdex],'seed:',opt.seed,'steps: {}k'.format(int(total_steps/1000)),'score:', score, 'time elapsed:', elapsed_minutes)
+                print(
+                    'EnvName:',BriefEnvName[opt.EnvIdex],
+                    'seed:',opt.seed,
+                    'steps: {}k'.format(int(total_steps/1000)),
+                    'score:', score, 
+                    'time elapsed:', elapsed_minutes,
+                    'eps: ', opt.epsilon
+                    )
             
 
             """ if total_steps % 5000 == 0:
