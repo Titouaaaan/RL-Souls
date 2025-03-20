@@ -38,6 +38,41 @@ class Duel_Q_Net(nn.Module):
 		Q = V + (Adv - torch.mean(Adv, dim=-1, keepdim=True))  # Q(s,a)=V(s)+A(s,a)-mean(A(s,a))
 		return Q
 
+class EnhancedDuel_Q_Net(nn.Module):
+    def __init__(self, state_dim, action_dim, hid_shape):
+        super(EnhancedDuel_Q_Net, self).__init__()
+        layers = [state_dim] + list(hid_shape)
+
+        hidden_layers = []
+        for i in range(len(layers) - 1):
+            hidden_layers.append(nn.Linear(layers[i], layers[i + 1]))
+            hidden_layers.append(nn.ReLU())
+            hidden_layers.append(nn.BatchNorm1d(layers[i + 1]))
+            hidden_layers.append(nn.Dropout(0.5))
+
+        self.hidden = nn.Sequential(*hidden_layers)
+
+        # Value stream
+        self.V = nn.Sequential(
+            nn.Linear(layers[-1], hid_shape[-1]),
+            nn.ReLU(),
+            nn.Linear(hid_shape[-1], 1)
+        )
+
+        # Advantage stream
+        self.A = nn.Sequential(
+            nn.Linear(layers[-1], hid_shape[-1]),
+            nn.ReLU(),
+            nn.Linear(hid_shape[-1], action_dim)
+        )
+
+    def forward(self, s):
+        s = self.hidden(s)
+        V = self.V(s)
+        A = self.A(s)
+        Q = V + (A - torch.mean(A, dim=-1, keepdim=True))  # Q(s,a)=V(s)+A(s,a)-mean(A(s,a))
+        return Q
+
 
 class DQN_agent(object):
 	def __init__(self, **kwargs):
@@ -47,6 +82,8 @@ class DQN_agent(object):
 		self.replay_buffer = ReplayBuffer(self.state_dim, self.dvc, max_size=int(1e6))
 		if self.Duel:
 			self.q_net = Duel_Q_Net(self.state_dim, self.action_dim, (self.net_width,self.net_width)).to(self.dvc)
+		elif self.Enhanced:
+			self.q_net = EnhancedDuel_Q_Net(self.state_dim, self.action_dim, (self.net_width,self.net_width)).to(self.dvc)
 		else:
 			self.q_net = Q_Net(self.state_dim, self.action_dim, (self.net_width, self.net_width)).to(self.dvc)
 		self.q_net_optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.lr)
