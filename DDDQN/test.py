@@ -58,7 +58,7 @@ def test_model():
 def env_test():
     from soulsgym.envs.darksouls3.iudex import IudexEnv
     env = IudexEnv(
-        game_speed=2,
+        game_speed=1,
         phase=2,
         init_pose_randomization=False
     )
@@ -68,4 +68,31 @@ def env_test():
         next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
     env.close()
 
-test_model()
+def change_action_space():
+    env = gym.make("SoulsGymIudex-v0")
+
+    file = r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml"
+
+    with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", "r") as file:
+        action_mapping = yaml.safe_load(file)
+
+    new_action_space = {
+        0: ['forward'], 1: ['forward', 'right'], 2: ['right'], 3: ['right', 'backward'], 4: ['backward'], 
+        5: ['backward', 'left'], 6: ['left'], 7: ['left', 'forward'], 8: ['forward', 'roll'],  
+        9: ['right', 'roll'], 10: ['backward', 'roll'],  11: ['left', 'roll'], 
+         12: ['lightattack'], 13: ['heavyattack'], 14: ['parry'], 15: []}
+    
+    with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", 'w') as file:
+        yaml.dump(new_action_space, file, default_flow_style=False)
+
+    #env.action_space = new_action_space
+    env.action_space = gym.spaces.Discrete(15)
+    obs, info = env.reset()
+    terminated = False
+    while not terminated:
+        action = env.action_space.sample()
+        action_name = " + ".join(action_mapping.get(action, ["Unknown Action"]))
+        print('action: ', action_name)
+        next_obs, reward, terminated, truncated, info = env.step(action)
+    env.close()
+
