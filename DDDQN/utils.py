@@ -1,7 +1,7 @@
 import numpy as np
 
 def evaluate_policy(env, agent, turns = 10):
-    print('--- Evaluating ---')
+    # print('--- Evaluating ---')
     total_scores = 0
     for j in range(turns):
         s, info = env.reset()
@@ -15,7 +15,7 @@ def evaluate_policy(env, agent, turns = 10):
             total_scores += r
             s = s_next
     env.reset()
-    return int(total_scores/turns)
+    return total_scores/turns
 
 
 #You can just ignore this funciton. Is not related to the RL.
@@ -62,36 +62,64 @@ def flatten_observation(obs):
 
     return flat_obs
 
-def compute_reward(game_state, next_game_state):
+def compute_reward(game_state, next_game_state, hit_given_var=80, hit_taken_var=90, roll_penalty_var=-0.05, time_penalty_var=0.0, death_var=0, move_reward_var=0.5):
     """Custom reward computation logic."""
     # Reward for hitting the boss
     boss_hp_diff = game_state.boss_hp - next_game_state.boss_hp
-    hit_reward = 60 * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
-    #print('hit reward', hit_reward)
+    hit_reward = hit_given_var * (boss_hp_diff / game_state.boss_max_hp)  # Scale up significantly
+    # if hit_reward != 0: print('hit reward', hit_reward)
 
     # Negative Reward for getting hit
     player_hp_diff = next_game_state.player_hp - game_state.player_hp
-    hit_taken_reward = 100 * (player_hp_diff / game_state.player_max_hp)  
+    hit_taken_reward = hit_taken_var * (player_hp_diff / game_state.player_max_hp)  
+    #if hit_taken_reward != 0: print('hit reward', hit_taken_reward)
 
     # Penalty for rolling
     # print(game_state.player_animation)
     valid_roll = ["RollingMedium", "RollingMediumSelftra"]
-    roll_penalty = -2 if game_state.player_animation in valid_roll else 0  # decent penalty for rolling 
+    roll_penalty = roll_penalty_var if game_state.player_animation in valid_roll else 0  # small penalty for rolling 
 
     # Penalty for time spent
-    time_penalty = -0.01  # Small penalty per step for time spent
+    time_penalty = time_penalty_var  # Small penalty per step for time spent
 
     # huge penalty if player dies
     # experimental im nit sure if this would work -> doesnt rly lol
-    death = -10 if next_game_state.player_hp == 0 else 0
+    death = death_var if next_game_state.player_hp == 0 else 0
 
     # Experimental: Reward for moving towards the arena center, no reward within 4m distance
     d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
     d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
-    move_reward = 0.1 * (d_center_prev - d_center_now) * (d_center_now > 4)
+    move_reward = move_reward_var * (d_center_prev - d_center_now) * (d_center_now > 4)
 
-    # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_penalty}')
+    # print(f'hit {hit_reward}, hit taken {hit_taken_reward}, roll {roll_reward}')
     # Combine rewards and penalties
-    total_reward = hit_reward + hit_taken_reward + move_reward + roll_penalty # + death  + time_penalty
+    total_reward = hit_reward + hit_taken_reward + move_reward + roll_penalty + death  + time_penalty
+    # print(f'hit_reward: {hit_reward} \nhit_taken_reward: {hit_taken_reward} \nmove_reward: {move_reward} \nroll_penalty: {roll_penalty} \ndeath: {death} \ntime_penalty: {time_penalty}')
+    # print('total: ', total_reward)
     #print(total_reward)
-    return total_reward
+    return total_reward # maybe divide by large num lke 100 if rewards are too big or too small
+
+def compute_reward_basic(game_state, next_game_state) -> float:
+        """Compute the reward from the current game state and the next game state.
+
+        Args:
+            game_state: The game state before the step.
+            next_game_state: The game state after the step.
+
+        Returns:
+            The reward for the provided game states.
+        """
+        boss_reward = 2 * ((game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp)
+        player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
+        player_reward = player_hp_diff / game_state.player_max_hp
+        if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
+            base_reward = 10 if next_game_state.boss_hp == 0 else -1
+        else:
+            # Experimental: Reward for moving towards the arena center, no reward within 4m distance
+            d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
+            d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
+            base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
+        """ if boss_reward != 0 or player_reward != 0:
+            print(f'Boss dmg reward: {boss_reward}')
+            print(f'Getting hit reward (penalty): {player_reward}') """
+        return (boss_reward + player_reward + base_reward) * 2 # scale it up

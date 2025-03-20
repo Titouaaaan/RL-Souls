@@ -3,7 +3,6 @@ import torch.nn as nn
 import numpy as np
 import torch
 import copy
-from utils import flatten_observation
 
 
 def build_net(layer_shape, activation, output_activation):
@@ -39,6 +38,41 @@ class Duel_Q_Net(nn.Module):
 		Q = V + (Adv - torch.mean(Adv, dim=-1, keepdim=True))  # Q(s,a)=V(s)+A(s,a)-mean(A(s,a))
 		return Q
 
+class EnhancedDuel_Q_Net(nn.Module):
+    def __init__(self, state_dim, action_dim, hid_shape):
+        super(EnhancedDuel_Q_Net, self).__init__()
+        layers = [state_dim] + list(hid_shape)
+
+        hidden_layers = []
+        for i in range(len(layers) - 1):
+            hidden_layers.append(nn.Linear(layers[i], layers[i + 1]))
+            hidden_layers.append(nn.ReLU())
+            hidden_layers.append(nn.BatchNorm1d(layers[i + 1]))
+            hidden_layers.append(nn.Dropout(0.5))
+
+        self.hidden = nn.Sequential(*hidden_layers)
+
+        # Value stream
+        self.V = nn.Sequential(
+            nn.Linear(layers[-1], hid_shape[-1]),
+            nn.ReLU(),
+            nn.Linear(hid_shape[-1], 1)
+        )
+
+        # Advantage stream
+        self.A = nn.Sequential(
+            nn.Linear(layers[-1], hid_shape[-1]),
+            nn.ReLU(),
+            nn.Linear(hid_shape[-1], action_dim)
+        )
+
+    def forward(self, s):
+        s = self.hidden(s)
+        V = self.V(s)
+        A = self.A(s)
+        Q = V + (A - torch.mean(A, dim=-1, keepdim=True))  # Q(s,a)=V(s)+A(s,a)-mean(A(s,a))
+        return Q
+
 
 class DQN_agent(object):
 	def __init__(self, **kwargs):
@@ -48,12 +82,19 @@ class DQN_agent(object):
 		self.replay_buffer = ReplayBuffer(self.state_dim, self.dvc, max_size=int(1e6))
 		if self.Duel:
 			self.q_net = Duel_Q_Net(self.state_dim, self.action_dim, (self.net_width,self.net_width)).to(self.dvc)
+		elif self.Enhanced:
+			self.q_net = EnhancedDuel_Q_Net(self.state_dim, self.action_dim, (self.net_width,self.net_width)).to(self.dvc)
 		else:
 			self.q_net = Q_Net(self.state_dim, self.action_dim, (self.net_width, self.net_width)).to(self.dvc)
 		self.q_net_optimizer = torch.optim.Adam(self.q_net.parameters(), lr=self.lr)
 		self.q_target = copy.deepcopy(self.q_net)
 		# Freeze target networks with respect to optimizers (only update via polyak averaging)
 		for p in self.q_target.parameters(): p.requires_grad = False
+
+		self.epsilon = kwargs.get('epsilon', 1.0)  
+		self.epsilon_decay = kwargs.get('epsilon_decay', 0.995)
+		self.epsilon_min = kwargs.get('epsilon_min', 0.01)
+		self.debugging = kwargs.get('debugging')
 
 
 	def select_action(self, state, deterministic):#only used when interact with the env
@@ -63,7 +104,7 @@ class DQN_agent(object):
 			if deterministic:
 				a = self.q_net(state).argmax().item()
 			else:
-				if np.random.rand() < self.exp_noise:
+				if np.random.rand() < self.epsilon:
 					a = np.random.randint(0,self.action_dim)
 				else:
 					a = self.q_net(state).argmax().item()
@@ -86,22 +127,53 @@ class DQN_agent(object):
 		current_q = self.q_net(s)
 		current_q_a = current_q.gather(1,a)
 
+		# print('Q-Value: ', current_q_a)
+
 		q_loss = F.mse_loss(current_q_a, target_Q)
 		self.q_net_optimizer.zero_grad()
 		q_loss.backward()
+
+		""" if self.debugging:
+			print(f"Initial Q-values mean: {current_q_a.mean().item()}, min: {current_q_a.min().item()}, max: {current_q_a.max().item()}")
+			print(f"Target Q-values mean: {target_Q.mean().item()}, min: {target_Q.min().item()}, max: {target_Q.max().item()}")
+			print(f"Gradient Mean: {sum(p.grad.abs().mean().item() for p in self.q_net.parameters() if p.grad is not None) / len(list(self.q_net.parameters()))}") """
+
+		torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
 		self.q_net_optimizer.step()
 
-		# Update the frozen target models
+		# Update the frozen target models 
 		for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
 			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+		
+		return q_loss.item()
 
 
-	def save(self,algo,EnvName,steps):
-		torch.save(self.q_net.state_dict(), "./model/{}_{}_{}.pth".format(algo,EnvName,steps))
+	def save(self, algo, EnvName, steps, checkpoint=True):
+		if checkpoint:
+			save_dict = {
+				'q_net_state_dict': self.q_net.state_dict(),
+				'q_target_state_dict': self.q_target.state_dict(),
+				'optimizer_state_dict': self.q_net_optimizer.state_dict(),
+				'epsilon': self.epsilon,
+				'steps': steps,
+			}
+			torch.save(save_dict, f"./model/{algo}_{EnvName}_checkpoint.pth")
+		else:
+			# Save final model (for deployment)
+			torch.save(self.q_net.state_dict(), f"./model/{algo}_{EnvName}.pth")
 
-	def load(self,algo,EnvName,steps):
-		self.q_net.load_state_dict(torch.load("./model/{}_{}_{}.pth".format(algo,EnvName,steps),map_location=self.dvc))
-		self.q_target.load_state_dict(torch.load("./model/{}_{}_{}.pth".format(algo,EnvName,steps),map_location=self.dvc))
+	def load(self, algo, EnvName, checkpoint=True):
+		if checkpoint:
+			checkpoint = torch.load(f"./model/{algo}_{EnvName}_checkpoint.pth", map_location=self.dvc, weights_only=True)
+			self.q_net.load_state_dict(checkpoint['q_net_state_dict'])
+			self.q_target.load_state_dict(checkpoint['q_target_state_dict'])
+			self.q_net_optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+			self.epsilon = checkpoint['epsilon']
+			return checkpoint['steps']  # Return 0 if 'steps' key is missing
+		else:
+			self.q_net.load_state_dict(torch.load(f"./model/{algo}_{EnvName}.pth", map_location=self.dvc))
+			self.q_target.load_state_dict(torch.load(f"./model/{algo}_{EnvName}.pth", map_location=self.dvc))
+			return 0
 
 
 class ReplayBuffer(object):
@@ -130,6 +202,26 @@ class ReplayBuffer(object):
 	def sample(self, batch_size):
 		ind = torch.randint(0, self.size, device=self.dvc, size=(batch_size,))
 		return self.s[ind], self.a[ind], self.r[ind], self.s_next[ind], self.dw[ind]
+	
+	def save(self, path):
+		save_dict = {
+			's': self.s,
+            'a': self.a,
+            'r': self.r,
+            's_next': self.s_next,
+            'dw': self.dw,
+            'ptr': self.ptr,
+            'size': self.size
+		}
+		torch.save(save_dict, path)
 
-
-
+	def load(self, path):
+		data = torch.load(path, map_location=self.dvc, weights_only=True)
+		self.s = data['s']
+		self.a = data['a']
+		self.r = data['r']
+		self.s_next = data['s_next']
+		self.dw = data['dw']
+		self.ptr = data['ptr']
+		self.size = data['size']
+        
