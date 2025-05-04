@@ -32,16 +32,16 @@ parser.add_argument('--Max_train_steps', type=int, default=int(1e10), help='Max 
 parser.add_argument('--save_interval', type=int, default=int(1e4), help='Model saving interval, in steps.')
 parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
 parser.add_argument('--eval_turns', type=int, default=3, help='How many episodes for eval')
-parser.add_argument('--random_steps', type=int, default=int(5e4), help='steps for random policy to explore')
-parser.add_argument('--update_every', type=int, default=1000, help='training frequency')
+parser.add_argument('--random_steps', type=int, default=int(1e3), help='steps for random policy to explore')
+parser.add_argument('--update_every', type=int, default=5000, help='training frequency')
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
 
 parser.add_argument('--gamma', type=float, default=0.99, help='Discounted Factor')
-parser.add_argument('--net_width', type=int, default=128, help='Hidden net width')
-parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-parser.add_argument('--batch_size', type=int, default=400, help='lenth of sliced trajectory')
+parser.add_argument('--net_width', type=int, default=256, help='Hidden net width')
+parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate')
+parser.add_argument('--batch_size', type=int, default=2048, help='lenth of sliced trajectory')
 parser.add_argument('--epsilon', type=float, default=1.0, help='eps for e greedy strategy')
-parser.add_argument('--epsilon_decay', type=float, default=0.999, help='decay rate of exploration')
+parser.add_argument('--epsilon_decay', type=float, default=0.9999, help='decay rate of exploration')
 parser.add_argument('--epsilon_min', type=float, default=0.1, help='min value for e greedy eps value')
 
 parser.add_argument('--Double', type=str2bool, default=True, help='Whether to use Double Q-learning')
@@ -75,7 +75,7 @@ class PreprocessedEnvWrapper(gym.Wrapper):
 
 def main():
     EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
-    BriefEnvName = ['Iudex-v2.1-redAS-newNet'] #
+    BriefEnvName = ['Iudex-v2.3-DEBUG'] #
 
     if opt.CustomReward:
         # wrapper to add our new parameters to the reward function while still being able to access the game state and next game state
@@ -114,11 +114,11 @@ def main():
     
     # REPLACE WITH YOUR OWN VENV PATH THIS IS ONLY TEMPORARY 
     # I KNOW IT LOOKS HORRIBLE BUT I WILL CHANGE IT LATER
-    with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", 'w') as file:
-        yaml.dump(new_action_space, file, default_flow_style=False)
+    # with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", 'w') as file:
+    #     yaml.dump(new_action_space, file, default_flow_style=False)
 
     #env.action_space = new_action_space
-    env.action_space = gym.spaces.Discrete(15)
+    #env.action_space = gym.spaces.Discrete(15)
 
     env = PreprocessedEnvWrapper(env, flatten_observation)
     opt.state_dim = 26 # env.observation_space.shape[0] # PLEASE FIX THIS LATER
@@ -224,7 +224,7 @@ def main():
                 score = evaluate_policy(env, agent, turns = opt.eval_turns)
                 if opt.write:
                     writer.add_scalar('ep_r', score, global_step=total_steps)
-                    writer.add_scalar('noise', agent.epsilon, global_step=total_steps)
+                    writer.add_scalar('e-greedy eps', agent.epsilon, global_step=total_steps)
 
                     elapsed_time = time.time() - start_time
                     elapsed_minutes = elapsed_time / 60
@@ -235,7 +235,7 @@ def main():
                     'steps: {}k'.format(int(total_steps/1000)),
                     'score:', score, 
                     'time elapsed:', elapsed_minutes,
-                    'eps: ', opt.epsilon
+                    'eps: ', agent.epsilon
                     )
             
 
@@ -251,7 +251,8 @@ def main():
             total_steps += 1
 
         # Epsilon decay after episodes instead of steps?
-        agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
+        if total_steps >= 5e4:
+            agent.epsilon = max(agent.epsilon_min, agent.epsilon * agent.epsilon_decay)
 
     env.close()
 

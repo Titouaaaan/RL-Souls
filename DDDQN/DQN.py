@@ -79,7 +79,7 @@ class DQN_agent(object):
 		# Init hyperparameters for agent, just like "self.gamma = opt.gamma, self.lambd = opt.lambd, ..."
 		self.__dict__.update(kwargs)
 		self.tau = 0.005
-		self.replay_buffer = ReplayBuffer(self.state_dim, self.dvc, max_size=int(1e6))
+		self.replay_buffer = PrioritizedReplayBuffer(self.state_dim, self.dvc, max_size=int(1e6))
 		if self.Duel:
 			self.q_net = Duel_Q_Net(self.state_dim, self.action_dim, (self.net_width,self.net_width)).to(self.dvc)
 		elif self.Enhanced:
@@ -112,40 +112,88 @@ class DQN_agent(object):
 
 
 	def train(self):
-		s, a, r, s_next, dw = self.replay_buffer.sample(self.batch_size)
+		if False:
+			s, a, r, s_next, dw = self.replay_buffer.sample(self.batch_size)
 
-		'''Compute the target Q value'''
-		with torch.no_grad():
-			if self.Double:
-				argmax_a = self.q_net(s_next).argmax(dim=1).unsqueeze(-1)
-				max_q_next = self.q_target(s_next).gather(1,argmax_a)
-			else:
-				max_q_next = self.q_target(s_next).max(1)[0].unsqueeze(1)
-			target_Q = r + (~dw) * self.gamma * max_q_next #dw: die or win
+			'''Compute the target Q value'''
+			with torch.no_grad():
+				if self.Double:
+					argmax_a = self.q_net(s_next).argmax(dim=1).unsqueeze(-1)
+					max_q_next = self.q_target(s_next).gather(1,argmax_a)
+				else:
+					max_q_next = self.q_target(s_next).max(1)[0].unsqueeze(1)
+				target_Q = r + (~dw) * self.gamma * max_q_next #dw: die or win
 
-		# Get current Q estimates
-		current_q = self.q_net(s)
-		current_q_a = current_q.gather(1,a)
+			# Get current Q estimates
+			current_q = self.q_net(s)
+			current_q_a = current_q.gather(1,a)
 
-		# print('Q-Value: ', current_q_a)
+			# print('Q-Value: ', current_q_a)
 
-		q_loss = F.mse_loss(current_q_a, target_Q)
-		self.q_net_optimizer.zero_grad()
-		q_loss.backward()
+			q_loss = F.mse_loss(current_q_a, target_Q)
+			self.q_net_optimizer.zero_grad()
+			q_loss.backward()
 
-		""" if self.debugging:
-			print(f"Initial Q-values mean: {current_q_a.mean().item()}, min: {current_q_a.min().item()}, max: {current_q_a.max().item()}")
-			print(f"Target Q-values mean: {target_Q.mean().item()}, min: {target_Q.min().item()}, max: {target_Q.max().item()}")
-			print(f"Gradient Mean: {sum(p.grad.abs().mean().item() for p in self.q_net.parameters() if p.grad is not None) / len(list(self.q_net.parameters()))}") """
+			""" if self.debugging:
+				print(f"Initial Q-values mean: {current_q_a.mean().item()}, min: {current_q_a.min().item()}, max: {current_q_a.max().item()}")
+				print(f"Target Q-values mean: {target_Q.mean().item()}, min: {target_Q.min().item()}, max: {target_Q.max().item()}")
+				print(f"Gradient Mean: {sum(p.grad.abs().mean().item() for p in self.q_net.parameters() if p.grad is not None) / len(list(self.q_net.parameters()))}") """
 
-		torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
-		self.q_net_optimizer.step()
+			# Uncomment this if the gradient clipping between -1 and 1 doesn't work
+			# torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), 10.0)
+			
+			# Clip gradients between -1 and 1
+			for param in self.q_net.parameters():
+				if param.grad is not None:
+					param.grad.data.clamp_(-1, 1)
 
-		# Update the frozen target models 
-		for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
-			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+			self.q_net_optimizer.step()
+
+			# Update the frozen target models 
+			for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
+				target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+			
+			return q_loss.item()
 		
-		return q_loss.item()
+		elif True:
+			s, a, r, s_next, dw, indices, weights = self.replay_buffer.sample(self.batch_size)
+
+			'''Compute the target Q value'''
+			with torch.no_grad():
+				if self.Double:
+					argmax_a = self.q_net(s_next).argmax(dim=1).unsqueeze(-1)
+					max_q_next = self.q_target(s_next).gather(1, argmax_a)
+				else:
+					max_q_next = self.q_target(s_next).max(1)[0].unsqueeze(1)
+				target_Q = r + (~dw) * self.gamma * max_q_next  # dw: die or win
+
+			# Get current Q estimates
+			current_q = self.q_net(s)
+			current_q_a = current_q.gather(1, a)
+
+			# Compute TD errors for updating priorities
+			td_errors = torch.abs(target_Q - current_q_a).detach().squeeze().cpu().numpy()
+
+			# Compute loss with importance-sampling weights
+			q_loss = (weights * F.mse_loss(current_q_a, target_Q, reduction='none')).mean()
+			self.q_net_optimizer.zero_grad()
+			q_loss.backward()
+
+			# Clip gradients between -1 and 1
+			for param in self.q_net.parameters():
+				if param.grad is not None:
+					param.grad.data.clamp_(-1, 1)
+
+			self.q_net_optimizer.step()
+
+			# Update the frozen target models
+			for param, target_param in zip(self.q_net.parameters(), self.q_target.parameters()):
+				target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+
+			# Update priorities in the replay buffer
+			self.replay_buffer.update_priorities(indices, td_errors + 1e-6)  # Adding a small constant to avoid zero priorities
+
+			return q_loss.item()
 
 
 	def save(self, algo, EnvName, steps, checkpoint=True):
@@ -224,4 +272,96 @@ class ReplayBuffer(object):
 		self.dw = data['dw']
 		self.ptr = data['ptr']
 		self.size = data['size']
-        
+
+class PrioritizedReplayBuffer(object):
+    def __init__(self, state_dim, dvc, max_size=int(1e6), alpha=0.6, beta=0.4, beta_increment_per_sampling=0.001):
+        self.max_size = max_size
+        self.dvc = dvc
+        self.ptr = 0
+        self.size = 0
+        self.alpha = alpha
+        self.beta = beta
+        self.beta_increment_per_sampling = beta_increment_per_sampling
+        self.max_priority = 1.0
+
+        self.s = torch.zeros((max_size, state_dim), dtype=torch.float, device=self.dvc)
+        self.a = torch.zeros((max_size, 1), dtype=torch.long, device=self.dvc)
+        self.r = torch.zeros((max_size, 1), dtype=torch.float, device=self.dvc)
+        self.s_next = torch.zeros((max_size, state_dim), dtype=torch.float, device=self.dvc)
+        self.dw = torch.zeros((max_size, 1), dtype=torch.bool, device=self.dvc)
+        self.priorities = np.zeros((max_size,), dtype=np.float32)
+
+    def add(self, s, a, r, s_next, dw, priority=None):
+        self.s[self.ptr] = torch.from_numpy(s).to(self.dvc)
+        self.a[self.ptr] = a
+        self.r[self.ptr] = r
+        self.s_next[self.ptr] = torch.from_numpy(s_next).to(self.dvc)
+        self.dw[self.ptr] = dw
+
+        if priority is None:
+            priority = self.max_priority
+
+        self.priorities[self.ptr] = priority
+        self.max_priority = max(self.max_priority, priority)
+
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
+
+    def sample(self, batch_size):
+        if self.size < batch_size:
+            raise ValueError("Not enough samples in the buffer")
+
+        priorities = self.priorities[:self.size]
+        probs = priorities ** self.alpha
+        probs /= probs.sum()
+
+        indices = np.random.choice(self.size, batch_size, p=probs)
+        weights = (self.size * probs[indices]) ** -self.beta
+        weights /= weights.max()
+
+        self.beta = min(self.beta + self.beta_increment_per_sampling, 1.0)
+
+        return (
+            self.s[indices],
+            self.a[indices],
+            self.r[indices],
+            self.s_next[indices],
+            self.dw[indices],
+            indices,
+            torch.tensor(weights, dtype=torch.float, device=self.dvc)
+        )
+
+    def update_priorities(self, indices, priorities):
+        for idx, priority in zip(indices, priorities):
+            self.priorities[idx] = priority
+            self.max_priority = max(self.max_priority, priority)
+
+    def save(self, path):
+        save_dict = {
+            's': self.s.cpu(),
+            'a': self.a.cpu(),
+            'r': self.r.cpu(),
+            's_next': self.s_next.cpu(),
+            'dw': self.dw.cpu(),
+            'priorities': self.priorities,
+            'ptr': self.ptr,
+            'size': self.size,
+            'alpha': self.alpha,
+            'beta': self.beta,
+            'max_priority': self.max_priority
+        }
+        torch.save(save_dict, path)
+
+    def load(self, path):
+        data = torch.load(path, map_location=self.dvc)
+        self.s = data['s'].to(self.dvc)
+        self.a = data['a'].to(self.dvc)
+        self.r = data['r'].to(self.dvc)
+        self.s_next = data['s_next'].to(self.dvc)
+        self.dw = data['dw'].to(self.dvc)
+        self.priorities = data['priorities']
+        self.ptr = data['ptr']
+        self.size = data['size']
+        self.alpha = data['alpha']
+        self.beta = data['beta']
+        self.max_priority = data['max_priority']
