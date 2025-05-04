@@ -32,7 +32,7 @@ parser.add_argument('--Max_train_steps', type=int, default=int(1e10), help='Max 
 parser.add_argument('--save_interval', type=int, default=int(1e4), help='Model saving interval, in steps.')
 parser.add_argument('--eval_interval', type=int, default=int(1e4), help='Model evaluating interval, in steps.')
 parser.add_argument('--eval_turns', type=int, default=3, help='How many episodes for eval')
-parser.add_argument('--random_steps', type=int, default=int(5e4), help='steps for random policy to explore')
+parser.add_argument('--random_steps', type=int, default=int(1e3), help='steps for random policy to explore')
 parser.add_argument('--update_every', type=int, default=5000, help='training frequency')
 parser.add_argument('--eps_decay_rate', type=int, default=3000, help='decay rate every n episodes')
 
@@ -75,7 +75,7 @@ class PreprocessedEnvWrapper(gym.Wrapper):
 
 def main():
     EnvName = ['SoulsGymIudex-v0'] # SoulsGymIudexDemo-v0 => for full fight to test out agent
-    BriefEnvName = ['Iudex-v2.3-redAS-newNet'] #
+    BriefEnvName = ['Iudex-v2.3-DEBUG'] #
 
     if opt.CustomReward:
         # wrapper to add our new parameters to the reward function while still being able to access the game state and next game state
@@ -114,11 +114,11 @@ def main():
     
     # REPLACE WITH YOUR OWN VENV PATH THIS IS ONLY TEMPORARY 
     # I KNOW IT LOOKS HORRIBLE BUT I WILL CHANGE IT LATER
-    with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", 'w') as file:
-        yaml.dump(new_action_space, file, default_flow_style=False)
+    # with open(r"D:\GAP YEAR\RL-Souls\DDDQN\dddqnvenv\Lib\site-packages\soulsgym\core\data\darksouls3\actions.yaml", 'w') as file:
+    #     yaml.dump(new_action_space, file, default_flow_style=False)
 
     #env.action_space = new_action_space
-    env.action_space = gym.spaces.Discrete(15)
+    #env.action_space = gym.spaces.Discrete(15)
 
     env = PreprocessedEnvWrapper(env, flatten_observation)
     opt.state_dim = 26 # env.observation_space.shape[0] # PLEASE FIX THIS LATER
