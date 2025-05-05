@@ -1,3 +1,9 @@
+'''
+SHIT TO FIX:
+D:\GAP YEAR\RL-Souls\TorchRL\torchrlenv\Lib\site-packages\torchrl\data\replay_buffers\samplers.py:34: UserWarning: Failed to import torchrl C++ binaries. Some modules (eg, prioritized replay buffers) may not work with your installation. This is likely due to a discrepancy between your package version and the PyTorch version. Make sure both are compatible. Usually, torchrl majors follow the pytorch majors within a few days around the release. For instance, TorchRL 
+0.5 requires PyTorch 2.4.0, and TorchRL 0.6 requires PyTorch 2.5.0.
+'''
+
 import gymnasium as gym
 import numpy as np
 import soulsgym
@@ -50,17 +56,18 @@ obs_spec = Composite(
 )
 
 # Apply to wrapped env
-wrapped_env.observation_spec = obs_spec
+wrapped_env.action_spec = wrapped_env.action_spec.to(device) 
+wrapped_env.observation_spec = obs_spec.to(device)
 
 # Create TransformedEnv
-env = TransformedEnv(wrapped_env)
+env = TransformedEnv(wrapped_env).to(device)
 
 # Print specs
 print("Observation spec:", env.observation_spec)
 print("Action spec:", env.action_spec)
+check_env_specs(env)
 
-
-n_episodes = 2
+n_episodes = 1
 
 for episode in range(n_episodes):
     # Reset safely
