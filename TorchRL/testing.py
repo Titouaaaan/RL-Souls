@@ -7,7 +7,12 @@ from torchrl.envs.utils import check_env_specs
 from tensordict.nn import TensorDictModule
 from torchrl.modules import Actor
 from torchrl.modules import MLP
-
+from tensordict.nn.distributions import NormalParamExtractor
+from torch.distributions import Normal
+from torchrl.modules import ProbabilisticActor, QValueModule
+from torchrl.envs.utils import ExplorationType, set_exploration_type
+from tensordict.nn import TensorDictSequential
+from torchrl.modules import EGreedyModule
 
 class FlattenObsWrapper(gym.ObservationWrapper):
     def __init__(self, env):
@@ -59,29 +64,23 @@ if __name__ == "__main__":
     td = env.reset()
     print(td)
     print("Obs shape after reset:", td["observation"].shape)
+    num_actions = 20
+    num_obs = 26
 
-    module = MLP(
-        out_features=env.action_spec.shape[-1],
-        num_cells=[32, 64],
-        activation_class=torch.nn.Tanh,
+    value_net = TensorDictModule(
+        MLP(out_features=num_actions, num_cells=[32, 32]),
+        in_keys=["observation"],
+        out_keys=["action_value"],
     ).to(device)
-    policy = Actor(module).to(device)
-    rollout = env.rollout(max_steps=200, policy=policy).to(device)
 
-    """ for ep in range(num_episodes):
-        print(f"\n=== Episode {ep + 1} ===")
-        td = env.reset()
-        done = False
-        step = 0
-        total_reward = 0.0
+    policy = TensorDictSequential(
+        value_net,  # writes action values in our tensordict
+        QValueModule(spec=env.action_spec),  # Reads the "action_value" entry by default
+    ).to(device)
 
-        while not done and step < max_steps:
-            td = env.rand_step(td)
-            reward = td["next", "reward"].item()
-            done = td["next", "done"].item()
-            total_reward += reward
-            step += 1
+    policy_explore = TensorDictSequential(policy, EGreedyModule(env.action_spec)).to(device)
 
-            print(f"Step {step}: reward = {reward}, done = {done}")
+    set_exploration_type(ExplorationType.RANDOM)
 
-        print(f"Total reward: {total_reward} in {step} steps") """
+    rollout = env.rollout(max_steps=500, policy=policy_explore).to(device)
+    print(rollout)
