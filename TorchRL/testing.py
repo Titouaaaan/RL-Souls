@@ -4,6 +4,9 @@ import numpy as np
 import torch
 from torchrl.envs import GymWrapper, TransformedEnv
 from torchrl.envs.utils import check_env_specs
+from tensordict.nn import TensorDictModule
+from torchrl.modules import Actor
+from torchrl.modules import MLP
 
 
 class FlattenObsWrapper(gym.ObservationWrapper):
@@ -57,10 +60,15 @@ if __name__ == "__main__":
     print(td)
     print("Obs shape after reset:", td["observation"].shape)
 
-    num_episodes = 1
-    max_steps = 1000
+    module = MLP(
+        out_features=env.action_spec.shape[-1],
+        num_cells=[32, 64],
+        activation_class=torch.nn.Tanh,
+    ).to(device)
+    policy = Actor(module).to(device)
+    rollout = env.rollout(max_steps=200, policy=policy).to(device)
 
-    for ep in range(num_episodes):
+    """ for ep in range(num_episodes):
         print(f"\n=== Episode {ep + 1} ===")
         td = env.reset()
         done = False
@@ -76,4 +84,4 @@ if __name__ == "__main__":
 
             print(f"Step {step}: reward = {reward}, done = {done}")
 
-        print(f"Total reward: {total_reward} in {step} steps")
+        print(f"Total reward: {total_reward} in {step} steps") """
