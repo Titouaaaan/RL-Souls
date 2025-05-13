@@ -1,112 +1,157 @@
-'''
-SHIT TO FIX:
-D:\GAP YEAR\RL-Souls\TorchRL\torchrlenv\Lib\site-packages\torchrl\data\replay_buffers\samplers.py:34: UserWarning: Failed to import torchrl C++ binaries. Some modules (eg, prioritized replay buffers) may not work with your installation. This is likely due to a discrepancy between your package version and the PyTorch version. Make sure both are compatible. Usually, torchrl majors follow the pytorch majors within a few days around the release. For instance, TorchRL 
-0.5 requires PyTorch 2.4.0, and TorchRL 0.6 requires PyTorch 2.5.0.
-'''
-
 import gymnasium as gym
-import numpy as np
 import soulsgym
+import numpy as np
 import torch
-from torchrl.envs.utils import check_env_specs
 from torchrl.envs import GymWrapper, TransformedEnv
-from torchrl.data import (
-    Composite,
-    OneHot,
-    Bounded,
-)
-from tensordict import TensorDict
-import multiprocessing
+from torchrl.envs.utils import check_env_specs
+from tensordict.nn import TensorDictModule
+from torchrl.modules import Actor
+from torchrl.modules import MLP
+from tensordict.nn.distributions import NormalParamExtractor
+from torch.distributions import Normal
+from torchrl.modules import ProbabilisticActor, QValueModule, ValueOperator
+from torchrl.envs.utils import ExplorationType, set_exploration_type
+from tensordict.nn import TensorDictSequential
+from torchrl.modules import EGreedyModule
+from torchrl.objectives import DDPGLoss
+from torch.optim import Adam
+from torchrl.objectives import SoftUpdate, DQNLoss
+from torchrl.collectors import SyncDataCollector
+from torchrl.data import LazyTensorStorage, ReplayBuffer
+import time
 
-# Choose device
-is_fork = multiprocessing.get_start_method() == "fork"
-device = torch.device("cuda" if torch.cuda.is_available() and not is_fork else "cpu")
+class FlattenObsWrapper(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        # Create a flattened observation space based on an example obs
+        obs_sample = self.observation(env.reset()[0])  # first obs from env
+        flat_dim = obs_sample.shape[0]
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32)
 
-# Create base gymnasium env
-raw_env = gym.make("SoulsGymIudex-v0")
+    def observation(self, obs):
+        # Flatten dictionary into a 1D NumPy array
+        flat = []
+        for v in obs.values():
+            arr = np.asarray(v, dtype=np.float32).flatten()
+            flat.append(arr)
+        return np.concatenate(flat, axis=0)
 
-# Wrap in GymWrapper
-wrapped_env = GymWrapper(raw_env)
 
-# Patch to avoid StopIteration: Use GymWrapper's reset() with return_info=True manually
-def safe_reset(env):
-    result = env.reset()
-    if isinstance(result, tuple) and len(result) == 2:
-        return result
-    else:
-        return result, {}
+def make_flattened_env(device):
+    # Step 1: Load SoulsGym environment
+    raw_env = gym.make("SoulsGymIudex-v0")
 
-# Custom observation spec (cleaned for TorchRL ≥ 0.7)
-obs_spec = Composite(
-    phase=OneHot(n=2, shape=(2,), device=device),
-    player_hp=Bounded(shape=(1,), dtype=torch.float32, low=0.1, high=2000.0, device=device),
-    player_max_hp=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=2000.0, device=device),
-    player_sp=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=500.0, device=device),
-    player_max_sp=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=500.0, device=device),
-    boss_hp=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=3000.0, device=device),
-    boss_max_hp=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=3000.0, device=device),
-    player_pose=Bounded(shape=(4,), dtype=torch.float32, low=-1000.0, high=1000.0, device=device),
-    boss_pose=Bounded(shape=(4,), dtype=torch.float32, low=-1000.0, high=1000.0, device=device),
-    camera_pose=Bounded(shape=(6,), dtype=torch.float32, low=-1e6, high=1e6, device=device),
-    player_animation=OneHot(n=51, shape=(51,), device=device),
-    player_animation_duration=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=30.0, device=device),
-    boss_animation=OneHot(n=33, shape=(33,), device=device),
-    boss_animation_duration=Bounded(shape=(1,), dtype=torch.float32, low=0.0, high=30.0, device=device),
-    lock_on=OneHot(n=2, shape=(2,), device=device),
-)
+    # Step 2: Flatten obs using custom wrapper
+    flat_env = FlattenObsWrapper(raw_env)
 
-# Apply to wrapped env
-wrapped_env.action_spec = wrapped_env.action_spec.to(device) 
-wrapped_env.observation_spec = obs_spec.to(device)
+    # Step 3: Wrap in TorchRL GymWrapper
+    torchrl_env = GymWrapper(flat_env).to(device)
 
-# Create TransformedEnv
-env = TransformedEnv(wrapped_env).to(device)
+    transformed_env = TransformedEnv(torchrl_env).to(device)
 
-# Print specs
-print("Observation spec:", env.observation_spec)
-print("Action spec:", env.action_spec)
-check_env_specs(env)
+    print("Observation spec:", transformed_env.observation_spec)
+    print("Action spec:", transformed_env.action_spec)
 
-n_episodes = 1
+    return transformed_env
 
-for episode in range(n_episodes):
-    # Reset safely
-    obs, info = safe_reset(env)
+if __name__ == "__main__":
+    torch.manual_seed(0)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
+    env = make_flattened_env(device)
+    env.set_seed(0)
+
+    # Test reset + step
+    td = env.reset().to(device)
+    # print(td)
+    # print("Obs shape after reset:", td["observation"].shape)
+    num_actions = env.action_spec.shape[0]
+    num_obs = env.observation_spec["observation"].shape[0]
+    print("Num actions:", num_actions)
+    print("Num obs:", num_obs)
+
+    value_mlp = MLP(
+        out_features=num_actions,
+        num_cells=[64, 64],
+    ).to(device)
+
+    value_net = TensorDictModule(
+        value_mlp,
+        in_keys=["observation"],
+        out_keys=["action_value"],
+    ).to(device)
+
+    policy = TensorDictSequential(
+        value_net,  # writes action values in our tensordict
+        QValueModule(spec=env.action_spec)  # Reads the "action_value" entry by default
+    ).to(device)
+
+    exploration_module = EGreedyModule(
+        env.action_spec, 
+        annealing_num_steps=100_000, # start of the decay
+        eps_init=0.95 # probability of taking a random action (exploration)
+    ).to(device)
     
-    terminated = truncated = False
-    episode_reward = 0.0
+    policy_explore = TensorDictSequential(
+        policy, exploration_module
+    ).to(device)
 
-    while not (terminated or truncated):  # Loop until the episode is finished
-        # Sample a random action
-        action_index = torch.randint(0, env.action_spec.shape[-1], (1,), device=device)
-        action = torch.nn.functional.one_hot(action_index, num_classes=env.action_spec.shape[-1]).squeeze(0).to(torch.int64)
+    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
+    frames_per_batch = 100 # data collection (steps collected per loop)
+    optim_steps = 10
+    collector = SyncDataCollector(
+        env,
+        policy_explore,
+        frames_per_batch=frames_per_batch, 
+        total_frames=-1, # -1 = collect forever
+        init_random_frames=init_rand_steps, 
+    )
+    rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
+    
+    loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
+    optim = Adam(
+        loss.parameters(), 
+        lr=0.001 # how much to update the weights (low value = slow update but more stable)
+    )
+    updater = SoftUpdate(
+        loss, 
+        eps=0.99  # target network update rate (high value means slow update but more stable once again)
+    )
 
-        td_input = TensorDict({"action": action.to(device)}, batch_size=[]).to(device=device)
+    check_env_specs(env) # verify the environment specs is good
 
-        # Step the environment
-        td_output = env.step(td_input)
+    total_count = 0
+    total_episodes = 0
+    t0 = time.time()
 
-        # Debug prints
-        #print(f"td_output: {td_output}")  # Print the entire output for debugging
-        #print(f"\n\n\n\n")
-        # Assuming td_input is a TensorDict, you can iterate through its fields
-        # Iterate through the fields in the 'next' part of the TensorDict
-        """ for key, tensor in td_input['next'].items():
-            print(f"{key}: {tensor.cpu().numpy()}") """
+    while total_count < 1e6:
+        for i, data in enumerate(collector):
+            # print(f'i: {i}')
+            # Write data in replay buffer
+            rb.extend(data)
+            if len(rb) > init_rand_steps:
+                # Optim loop (we do several optim steps
+                # per batch collected for efficiency)
+                for step in range(optim_steps):
+                    # print(f'optim step: {step}')
+                    sample = rb.sample(128).to(device)
+                    loss_vals = loss(sample)
+                    loss_vals["loss"].backward()
+                    optim.step()
+                    optim.zero_grad()
+                    # Update exploration factor
+                    exploration_module.step(data.numel())
+                    # Update target params
+                    updater.step()
 
-        next_tensors = td_input.get('next')
+                    total_count += data.numel()
+                    total_episodes += data["next", "done"].sum()
+                if i % 10 == 0:
+                    mean_reward = data["next", "reward"].mean().item()
+                    loss_val = loss_vals["loss"].item()
+                    print(f"[Step {i}] RB size: {len(rb)}, Mean reward: {mean_reward}, Loss: {loss_val}, Time: {time.time()-t0:.2f}s")
 
-        # Now access reward, terminated, truncated, and done from the 'next' field
-        reward = next_tensors.get('reward').item()
-        terminated = next_tensors.get('terminated').item()
-        truncated = next_tensors.get('truncated').item()
-        done = next_tensors.get('done').item()
-
-        episode_reward += reward
-        # Print the values
-        print(f"Reward: {reward}, Terminated: {terminated}, Truncated: {truncated}, Done: {done}")
-
-    print(f"Episode {episode + 1} finished with total reward: {episode_reward}")
-
-# Clean up
-env.close()
+        t1 = time.time()
+    
+    print(f'Training stopped after {total_count} steps, {total_episodes} episodes and in {t1-t0}s.')

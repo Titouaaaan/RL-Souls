@@ -64,6 +64,7 @@ if __name__ == "__main__":
     td = env.reset()
     print(td)
     print("Obs shape after reset:", td["observation"].shape)
+
     num_actions = 20
     num_obs = 26
 
@@ -82,5 +83,7 @@ if __name__ == "__main__":
 
     set_exploration_type(ExplorationType.RANDOM)
 
-    rollout = env.rollout(max_steps=500, policy=policy_explore).to(device)
-    print(rollout)
+    rollout = env.rollout(max_steps=100, policy=policy_explore).to(device)
+    """ for t in range(rollout.size(0)):
+        obs = rollout[t]["observation"]
+        print(f"Step {t} observation:", obs) """
