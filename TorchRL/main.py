@@ -5,15 +5,10 @@ import torch
 from torchrl.envs import GymWrapper, TransformedEnv
 from torchrl.envs.utils import check_env_specs
 from tensordict.nn import TensorDictModule
-from torchrl.modules import Actor
 from torchrl.modules import MLP
-from tensordict.nn.distributions import NormalParamExtractor
-from torch.distributions import Normal
-from torchrl.modules import ProbabilisticActor, QValueModule, ValueOperator
-from torchrl.envs.utils import ExplorationType, set_exploration_type
+from torchrl.modules import QValueModule
 from tensordict.nn import TensorDictSequential
-from torchrl.modules import EGreedyModule
-from torchrl.objectives import DDPGLoss
+from torchrl.modules import EGreedyModule, DuelingCnnDQNet
 from torch.optim import Adam
 from torchrl.objectives import SoftUpdate, DQNLoss
 from torchrl.collectors import SyncDataCollector
@@ -109,7 +104,13 @@ if __name__ == "__main__":
     )
     rb = ReplayBuffer(storage=LazyTensorStorage(100_000))
     
-    loss = DQNLoss(value_network=policy, action_space=env.action_spec, delay_value=True).to(device)
+    loss = DQNLoss(
+        value_network=policy, 
+        delay_value=True, # create a target network
+        double_dqn=True, # use the target network
+        action_space=env.action_spec, 
+    ).to(device)
+
     optim = Adam(
         loss.parameters(), 
         lr=0.001 # how much to update the weights (low value = slow update but more stable)
