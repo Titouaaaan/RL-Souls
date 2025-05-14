@@ -25,20 +25,19 @@ class FlattenObsWrapper(gym.ObservationWrapper):
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32)
 
     def observation(self, obs):
-        # Flatten dictionary into a 1D NumPy array
         flat = []
         for v in obs.values():
-            arr = np.asarray(v, dtype=np.float32).flatten()
+            arr = torch.tensor(v, dtype=torch.float32).flatten()
             flat.append(arr)
-        return np.concatenate(flat, axis=0)
+        return torch.cat(flat, dim=0)
 
-def save(policy, optim, total_count):
+def save(policy, optim, total_count, file_name="test.pth"):
     torch.save({
             "model_state_dict": policy.state_dict(),
             "optimizer_state_dict": optim.state_dict(),
             "step": total_count
             }, 
-            "dqn_checkpoint.pth")
+            file_name)
     #print(f"Checkpoint saved at dqn_checkpoint.pth.")
 
 def make_flattened_env(device):
@@ -62,7 +61,11 @@ def train_agent():
     ''' Train the DQN agent on the SoulsGym environment. '''
     torch.manual_seed(0)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(torch.cuda.is_available())  # should return True
+    print(torch.cuda.current_device())
+    print(torch.cuda.get_device_name(torch.cuda.current_device()))
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
     env = make_flattened_env(device)
     env.set_seed(0)
@@ -76,15 +79,16 @@ def train_agent():
     print("Num actions:", num_actions)
     print("Num obs:", num_obs)
     
-    LOAD = True
+    LOAD = False
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
-        checkpoint = torch.load("dqn_checkpoint.pth", weights_only=False)
+        checkpoint = torch.load("dqn_checkpoint_2.pth", weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
     value_mlp = MLP(
         out_features=num_actions, # Q values for each action
-        num_cells=[64, 128, 256], # hidden layers size
+        num_cells=[256, 256, 256], # hidden layers size,
+        activation_class=torch.nn.ReLU, # activation function
     ).to(device)
 
     value_net = TensorDictModule(
@@ -104,7 +108,7 @@ def train_agent():
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=5e7, # end of the decay
-        eps_init=0.995, # probability of taking a random action (exploration)\
+        eps_init=1.0, # probability of taking a random action (exploration)\
         eps_end=0.1
     ).to(device)
     
@@ -112,7 +116,7 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
+    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection)
     frames_per_batch = 100 # data collection (steps collected per loop)
     optim_steps = 25 # optim steps per batch collected
 
@@ -143,20 +147,24 @@ def train_agent():
         loss, 
         eps=0.99  # target network update rate (high value means slow update but more stable once again)
     )
-
-    check_env_specs(env) # verify the environment specs is good
-
     
     if LOAD:
         total_count = checkpoint["step"]
+        """ print(total_count)
+        print(f"exploration_module._eps device: {exploration_module.eps.device}")
+        print(f"device: {device}") """
+  
+        exploration_module.step(total_count)
     else:
         total_count = 0
     #total_episodes = 0
     t0 = time.time()
 
-    training_steps = 1e8 # total training steps
 
-    with tqdm(total=training_steps, desc="Training", unit="steps") as pbar:
+    training_steps = 1e8 # total training steps
+    check_env_specs(env) # verify the environment specs is good
+
+    with tqdm(total=training_steps, desc="Training", unit="steps", initial=total_count) as pbar:
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
@@ -166,12 +174,13 @@ def train_agent():
                 # per batch collected for efficiency)
                 for step in range(optim_steps):
                     # print(f'optim step: {step}')
-                    sample = rb.sample(128).to(device)
+                    sample = rb.sample(256).to(device)
                     loss_vals = loss(sample)
                     loss_vals["loss"].backward()
                     optim.step()
                     optim.zero_grad()
                     # Update exploration factor
+                    # print('test', data.numel())
                     exploration_module.step(data.numel())
                     # Update target params
                     updater.step()
@@ -182,7 +191,8 @@ def train_agent():
                     pbar.update(data.numel())
                     pbar.set_postfix({
                     "Reward": data["next", "reward"].mean().item(),
-                    "Loss": f"{loss_vals['loss'].item():.4f}"
+                    "Loss": f"{loss_vals['loss'].item():.4f}",
+                    # "Eps": f"{exploration_module._eps.item():.3f}" #find a way to access this
                     #"Episodes": int(total_episodes)
                     })
             if i % 50 == 0:
