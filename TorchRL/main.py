@@ -105,11 +105,14 @@ def train_agent():
     if LOAD:
         policy.load_state_dict(checkpoint["model_state_dict"])
 
+    eps_init=0.995, # probability of taking a random action (exploration)\
+    eps_end=0.1
+    annealing_num_steps=5e7
     exploration_module = EGreedyModule(
         env.action_spec, 
-        annealing_num_steps=5e7, # end of the decay
-        eps_init=0.995, # probability of taking a random action (exploration)\
-        eps_end=0.1
+        annealing_num_steps=annealing_num_steps, # end of the decay
+        eps_init=eps_init, # probability of taking a random action (exploration)\
+        eps_end=eps_end
     ).to(device)
     
     policy_explore = TensorDictSequential(
@@ -153,7 +156,7 @@ def train_agent():
         """ print(total_count)
         print(f"exploration_module._eps device: {exploration_module.eps.device}")
         print(f"device: {device}") """
-        epsilon = max(0.1, 1.0 - (1.0 - 0.1) * (total_count / 5e7)) # this calulcates the epsilon value for our current step
+        epsilon = max(eps_end, eps_init - (eps_init - eps_end) * (total_count / annealing_num_steps)) # this calulcates the epsilon value for our current step
         exploration_module.eps = torch.tensor(epsilon).to(device)
     else:
         total_count = 0
