@@ -31,7 +31,7 @@ class FlattenObsWrapper(gym.ObservationWrapper):
             flat.append(arr)
         return torch.cat(flat, dim=0)
 
-def save(policy, optim, total_count, file_name="test.pth"):
+def save(policy, optim, total_count, file_name="dqn_checkpoint_2.pth"):
     torch.save({
             "model_state_dict": policy.state_dict(),
             "optimizer_state_dict": optim.state_dict(),
@@ -60,13 +60,12 @@ def make_flattened_env(device):
 def train_agent():
     ''' Train the DQN agent on the SoulsGym environment. '''
     torch.manual_seed(0)
-
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(torch.cuda.is_available())  # should return True
     print(torch.cuda.current_device())
     print(torch.cuda.get_device_name(torch.cuda.current_device()))
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(device)
+
     env = make_flattened_env(device)
     env.set_seed(0)
 
@@ -79,7 +78,7 @@ def train_agent():
     print("Num actions:", num_actions)
     print("Num obs:", num_obs)
     
-    LOAD = False
+    LOAD = True
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
         checkpoint = torch.load("dqn_checkpoint_2.pth", weights_only=False)
@@ -153,8 +152,8 @@ def train_agent():
         """ print(total_count)
         print(f"exploration_module._eps device: {exploration_module.eps.device}")
         print(f"device: {device}") """
-  
-        exploration_module.step(total_count)
+        epsilon = max(0.1, 1.0 - (1.0 - 0.1) * (total_count / 5e7)) # this calulcates the epsilon value for our current step
+        exploration_module.eps = torch.tensor(epsilon).to(device)
     else:
         total_count = 0
     #total_episodes = 0
@@ -192,7 +191,7 @@ def train_agent():
                     pbar.set_postfix({
                     "Reward": data["next", "reward"].mean().item(),
                     "Loss": f"{loss_vals['loss'].item():.4f}",
-                    # "Eps": f"{exploration_module._eps.item():.3f}" #find a way to access this
+                    "Eps": f"{exploration_module.eps}" #find a way to access this
                     #"Episodes": int(total_episodes)
                     })
             if i % 50 == 0:
