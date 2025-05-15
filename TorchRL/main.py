@@ -8,7 +8,7 @@ from tensordict.nn import TensorDictModule
 from torchrl.modules import MLP
 from torchrl.modules import QValueModule
 from tensordict.nn import TensorDictSequential
-from torchrl.modules import EGreedyModule, DuelingCnnDQNet
+from torchrl.modules import EGreedyModule
 from torch.optim import Adam
 from torchrl.objectives import SoftUpdate, DQNLoss
 from torchrl.collectors import SyncDataCollector
@@ -42,7 +42,7 @@ def save(policy, optim, total_count, file_name="dqn_checkpoint_2.pth"):
 
 def make_flattened_env(device):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make("SoulsGymIudex-v0")
+    raw_env = gym.make("SoulsGymIudex-v0", game_speed=3.0) # 
 
     # Step 2: Flatten obs using custom wrapper
     flat_env = FlattenObsWrapper(raw_env)
@@ -62,8 +62,9 @@ def train_agent():
     torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(torch.cuda.is_available())  # should return True
-    print(torch.cuda.current_device())
-    print(torch.cuda.get_device_name(torch.cuda.current_device()))
+    print(torch.version.cuda)
+    print(torch.cuda.current_device()) # returns 0 (correct)
+    print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
     print(device)
 
     env = make_flattened_env(device)
@@ -78,7 +79,7 @@ def train_agent():
     print("Num actions:", num_actions)
     print("Num obs:", num_obs)
     
-    LOAD = True
+    LOAD = False
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
         checkpoint = torch.load("dqn_checkpoint_2.pth", weights_only=False)
@@ -107,7 +108,7 @@ def train_agent():
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=5e7, # end of the decay
-        eps_init=1.0, # probability of taking a random action (exploration)\
+        eps_init=0.995, # probability of taking a random action (exploration)\
         eps_end=0.1
     ).to(device)
     
@@ -167,22 +168,24 @@ def train_agent():
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
-            rb.extend(data)
+            rb.extend(data).to(device)
             if len(rb) > init_rand_steps:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
                 for step in range(optim_steps):
                     # print(f'optim step: {step}')
                     sample = rb.sample(256).to(device)
-                    loss_vals = loss(sample)
+                    loss_vals = loss(sample).to(device)
                     loss_vals["loss"].backward()
                     optim.step()
                     optim.zero_grad()
                     # Update exploration factor
                     # print('test', data.numel())
-                    exploration_module.step(data.numel())
+                    exploration_module.step(data.numel()) #.to(device) ?
+                    # print('exp', exploration_module)
                     # Update target params
-                    updater.step()
+                    updater.step() # .to(device) ?
+                    # print('updater', updater)
 
                     total_count += data.numel()
                     #total_episodes += data["next", "done"].sum()
