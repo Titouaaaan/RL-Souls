@@ -87,7 +87,7 @@ def train_agent():
     # observation --> MLP --> Q-values --> QValueModule --> action
     value_mlp = MLP(
         out_features=num_actions, # Q values for each action
-        num_cells=[256, 256, 256], # hidden layers size,
+        num_cells=[512, 512, 512], # hidden layers size,
         activation_class=torch.nn.ReLU, # activation function
     ).to(device)
 
@@ -116,7 +116,7 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection)
+    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
     frames_per_batch = 100 # data collection (steps collected per loop)
     optim_steps = 25 # optim steps per batch collected
 
@@ -174,9 +174,13 @@ def train_agent():
                 # per batch collected for efficiency)
                 for step in range(optim_steps):
                     # print(f'optim step: {step}')
-                    sample = rb.sample(256).to(device)
+                    sample = rb.sample(512).to(device)
+                    # print('sample', sample)
                     loss_vals = loss(sample).to(device)
                     loss_vals["loss"].backward()
+
+                    torch.cuda.synchronize()
+
                     optim.step()
                     optim.zero_grad()
                     # Update exploration factor
