@@ -1,5 +1,7 @@
 import gymnasium as gym
 import soulsgym
+from soulsgym.envs.darksouls3.iudex import IudexEnv
+from soulsgym.core.game_state import GameState
 import numpy as np
 import torch
 from torchrl.envs import GymWrapper, TransformedEnv
@@ -31,7 +33,7 @@ class FlattenObsWrapper(gym.ObservationWrapper):
             flat.append(arr)
         return torch.cat(flat, dim=0)
 
-def save(policy, optim, total_count, file_name="dqn_checkpoint_2.pth"):
+def save(policy, optim, total_count, file_name="dqn_checkpoint_3sad wa ds qp.pth"):
     torch.save({
             "model_state_dict": policy.state_dict(),
             "optimizer_state_dict": optim.state_dict(),
@@ -40,9 +42,34 @@ def save(policy, optim, total_count, file_name="dqn_checkpoint_2.pth"):
             file_name)
     #print(f"Checkpoint saved at dqn_checkpoint.pth.")
 
+@staticmethod
+def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> float:
+    """Compute the reward from the current game state and the next game state.
+
+    Args:
+        game_state: The game state before the step.
+        next_game_state: The game state after the step.
+
+    Returns:
+        The reward for the provided game states.
+    """
+    boss_reward = 2* (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
+    player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
+    player_reward = player_hp_diff / game_state.player_max_hp
+    if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
+        base_reward = 1 if next_game_state.boss_hp == 0 else -0.1
+    else:
+        # Experimental: Reward for moving towards the arena center, no reward within 4m distance
+        d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
+        d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
+        base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
+    return boss_reward + player_reward + 2 * base_reward
+
 def make_flattened_env(device):
     # Step 1: Load SoulsGym environment
     raw_env = gym.make("SoulsGymIudex-v0", game_speed=3.0) # 
+
+    IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
     # Step 2: Flatten obs using custom wrapper
     flat_env = FlattenObsWrapper(raw_env)
@@ -79,6 +106,8 @@ def train_agent():
     print("Num actions:", num_actions)
     print("Num obs:", num_obs)
     
+    training_steps = 2e6 # total training steps
+
     LOAD = False
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
@@ -87,7 +116,7 @@ def train_agent():
     # observation --> MLP --> Q-values --> QValueModule --> action
     value_mlp = MLP(
         out_features=num_actions, # Q values for each action
-        num_cells=[512, 512, 512], # hidden layers size,
+        num_cells=[512, 512], # hidden layers size,
         activation_class=torch.nn.ReLU, # activation function
     ).to(device)
 
@@ -105,9 +134,9 @@ def train_agent():
     if LOAD:
         policy.load_state_dict(checkpoint["model_state_dict"])
 
-    eps_init=0.995, # probability of taking a random action (exploration)\
+    eps_init=0.995 # probability of taking a random action (exploration)\
     eps_end=0.1
-    annealing_num_steps=5e7
+    annealing_num_steps=0.6 * training_steps # number of steps to decay the exploration probability
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=annealing_num_steps, # end of the decay
@@ -120,8 +149,8 @@ def train_agent():
     ).to(device)
 
     init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
-    frames_per_batch = 100 # data collection (steps collected per loop)
-    optim_steps = 25 # optim steps per batch collected
+    frames_per_batch = 400 # data collection (steps collected per loop)
+    optim_steps = 10 # optim steps per batch collected
 
     collector = SyncDataCollector(
         env,
@@ -130,7 +159,7 @@ def train_agent():
         total_frames=-1, # -1 = collect forever
         init_random_frames=init_rand_steps, 
     )
-    rb = ReplayBuffer(storage=LazyTensorStorage(250_000))
+    rb = ReplayBuffer(storage=LazyTensorStorage(1_000_000))
     
     loss = DQNLoss(
         value_network=policy, 
@@ -141,7 +170,7 @@ def train_agent():
 
     optim = Adam(
         loss.parameters(), 
-        lr=0.0001 # how much to update the weights (low value = slow update but more stable)
+        lr=3e-4 # how much to update the weights (low value = slow update but more stable)
     )
     if LOAD:
         optim.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -163,8 +192,6 @@ def train_agent():
     #total_episodes = 0
     t0 = time.time()
 
-
-    training_steps = 1e8 # total training steps
     check_env_specs(env) # verify the environment specs is good
 
     with tqdm(total=training_steps, desc="Training", unit="steps", initial=total_count) as pbar:
@@ -177,12 +204,13 @@ def train_agent():
                 # per batch collected for efficiency)
                 for step in range(optim_steps):
                     # print(f'optim step: {step}')
-                    sample = rb.sample(512).to(device)
+                    sample = rb.sample(128).to(device)
                     # print('sample', sample)
                     loss_vals = loss(sample).to(device)
                     loss_vals["loss"].backward()
+                    torch.nn.utils.clip_grad_norm_(loss.parameters(), 10)
 
-                    torch.cuda.synchronize()
+                    # torch.cuda.synchronize()
 
                     optim.step()
                     optim.zero_grad()
@@ -194,17 +222,18 @@ def train_agent():
                     updater.step() # .to(device) ?
                     # print('updater', updater)
 
-                    total_count += data.numel()
-                    #total_episodes += data["next", "done"].sum()
+                total_count += data.numel() # how much data we collected
+                #total_episodes += data["next", "done"].sum()
 
-                    pbar.update(data.numel())
-                    pbar.set_postfix({
-                    "Reward": data["next", "reward"].mean().item(),
-                    "Loss": f"{loss_vals['loss'].item():.4f}",
-                    "Eps": f"{exploration_module.eps}" #find a way to access this
-                    #"Episodes": int(total_episodes)
-                    })
-            if i % 50 == 0:
+                pbar.n = total_count
+                pbar.refresh()
+                pbar.set_postfix({
+                "Reward": data["next", "reward"].mean().item(),
+                # "Episodes": data["next", "done"].sum().item(), # this is broken bc its resets lol need to find another way
+                "Loss": f"{loss_vals['loss'].item():.4f}",
+                "Eps": f"{exploration_module.eps}" 
+                })
+            if i % 100 == 0 and len(rb) > init_rand_steps:
                 # Save the model every 50 iterations
                 save(policy, optim, total_count)
                     
