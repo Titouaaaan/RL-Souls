@@ -2,3 +2,4 @@ soulsenv/
 DDDQN/dddqnvenv
 */__pycache__/
 TorchRL/torchrlenv
+TorchRL/newtorchrlenv

@@ -14,9 +14,11 @@ from torchrl.modules import EGreedyModule
 from torch.optim import Adam
 from torchrl.objectives import SoftUpdate, DQNLoss
 from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer
+from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage
+from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 import time
 from tqdm import tqdm
+from torchrl.data import TensorDictReplayBuffer
 
 class FlattenObsWrapper(gym.ObservationWrapper):
     def __init__(self, env):
@@ -159,13 +161,21 @@ def train_agent():
         total_frames=-1, # -1 = collect forever
         init_random_frames=init_rand_steps, 
     )
-    rb = ReplayBuffer(storage=LazyTensorStorage(1_000_000))
+
+    size = 1_000_000
+    rb = TensorDictReplayBuffer(
+        storage=ListStorage(size),
+        sampler=PrioritizedSampler(max_capacity=size, alpha=0.8, beta=1.1),
+        priority_key="td_error",
+        batch_size=128
+    )
     
     loss = DQNLoss(
         value_network=policy, 
         delay_value=True, # create a target network
         double_dqn=True, # use the target network
         action_space=env.action_spec, 
+        
     ).to(device)
 
     optim = Adam(
@@ -198,19 +208,19 @@ def train_agent():
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
+
             rb.extend(data).to(device)
             if len(rb) > init_rand_steps:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
                 for step in range(optim_steps):
+                    
                     # print(f'optim step: {step}')
-                    sample = rb.sample(128).to(device)
+                    sample = rb.sample().to(device)
                     # print('sample', sample)
                     loss_vals = loss(sample).to(device)
                     loss_vals["loss"].backward()
                     torch.nn.utils.clip_grad_norm_(loss.parameters(), 10)
-
-                    # torch.cuda.synchronize()
 
                     optim.step()
                     optim.zero_grad()
@@ -221,6 +231,7 @@ def train_agent():
                     # Update target params
                     updater.step() # .to(device) ?
                     # print('updater', updater)
+                    rb.update_tensordict_priority(sample)
 
                 total_count += data.numel() # how much data we collected
                 #total_episodes += data["next", "done"].sum()
