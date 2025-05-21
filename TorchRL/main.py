@@ -1,50 +1,44 @@
+import time
+import os
+from tqdm import tqdm
+from utils import FlattenObsWrapper
+import numpy as np
+
 import gymnasium as gym
 import soulsgym
 from soulsgym.envs.darksouls3.iudex import IudexEnv
 from soulsgym.core.game_state import GameState
-import numpy as np
+
 import torch
+from torch.optim import Adam
+from tensordict.nn import TensorDictModule, TensorDictSequential
+
 from torchrl.envs import GymWrapper, TransformedEnv
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
-from tensordict.nn import TensorDictModule
-from torchrl.modules import MLP
-from torchrl.modules import QValueModule
-from tensordict.nn import TensorDictSequential
-from torchrl.modules import EGreedyModule
-from torch.optim import Adam
+from torchrl.modules import MLP, QValueModule, EGreedyModule
 from torchrl.objectives import SoftUpdate, DQNLoss
 from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage
+from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
-import time
-from tqdm import tqdm
-from torchrl.data import TensorDictReplayBuffer
 
-class FlattenObsWrapper(gym.ObservationWrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        # Create a flattened observation space based on an example obs
-        obs_sample = self.observation(env.reset()[0])  # first obs from env
-        flat_dim = obs_sample.shape[0]
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32)
+default_checkpoint_dir = "checkpoints"
+save_path = "dqn_checkpoint_5.pth"
 
-    def observation(self, obs):
-        flat = []
-        for v in obs.values():
-            arr = torch.tensor(v, dtype=torch.float32).flatten()
-            flat.append(arr)
-        return torch.cat(flat, dim=0)
+def save(policy, optim, total_count, default_checkpoint_dir, file_name):
+    # Create the full path by joining the default directory and the file name
+    full_path = os.path.join(default_checkpoint_dir, file_name)
 
-save_path = "/checkpoints/dqn_checkpoint_5.pth"
+    # Create the directory if it does not exist
+    os.makedirs(default_checkpoint_dir, exist_ok=True)
 
-def save(policy, optim, total_count, file_name=save_path):
+    # Save the checkpoint
     torch.save({
-            "model_state_dict": policy.state_dict(),
-            "optimizer_state_dict": optim.state_dict(),
-            "step": total_count
-            }, 
-            file_name)
-    #print(f"Checkpoint saved at dqn_checkpoint.pth.")
+        "model_state_dict": policy.state_dict(),
+        "optimizer_state_dict": optim.state_dict(),
+        "step": total_count
+    }, full_path)
+
+    #print(f"Checkpoint saved at {full_path}.")
 
 @staticmethod
 def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> float:
@@ -152,7 +146,7 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
+    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection)
     frames_per_batch = 400 # data collection (steps collected per loop)
     optim_steps = 10 # optim steps per batch collected
 
@@ -248,13 +242,13 @@ def train_agent():
                 })
             if i % 100 == 0 and len(rb) > init_rand_steps:
                 # Save the model every 50 iterations
-                save(policy, optim, total_count)
+                save(policy, optim, total_count, default_checkpoint_dir, save_path)
                     
             t1 = time.time()
             if total_count >= training_steps: 
                 break
 
-        save(policy, optim, total_count)
+        save(policy, optim, total_count, default_checkpoint_dir, save_path)
         print(f"Checkpoint saved at {save_path}.")
         print(f'Training stopped after {total_count} steps in {t1-t0}s.')
 
