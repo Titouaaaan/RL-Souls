@@ -13,6 +13,9 @@ from torchrl.modules import ProbabilisticActor, QValueModule
 from torchrl.envs.utils import ExplorationType, set_exploration_type
 from tensordict.nn import TensorDictSequential
 from torchrl.modules import EGreedyModule
+import gymnasium
+import soulsgym
+from utils import GameStateTransformer, OneHotEncoder
 
 class FlattenObsWrapper(gym.ObservationWrapper):
     def __init__(self, env):
@@ -21,9 +24,11 @@ class FlattenObsWrapper(gym.ObservationWrapper):
         obs_sample = self.observation(env.reset()[0])  # first obs from env
         flat_dim = obs_sample.shape[0]
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32)
+        transformer = GameStateTransformer()
 
     def observation(self, obs):
         # Flatten dictionary into a 1D NumPy array
+        #return self.transformer.transform(obs)
         flat = []
         for v in obs.values():
             arr = np.asarray(v, dtype=np.float32).flatten()
@@ -52,38 +57,38 @@ def make_flattened_env(device):
 
     return transformed_env
 
-
-    
-
 if __name__ == "__main__":
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(device)
-    env = make_flattened_env(device)
+    transformer = GameStateTransformer()
+    env = gym.make("SoulsGymIudex-v0")
+    terminated = False
+    env.reset()
+    while not terminated:
+        next_obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
+        new_obs = transformer.transform(next_obs)
+        print("Transformed obs:", new_obs, "Len:", len(new_obs))
+    env.close()
 
-    # Test reset + step
-    td = env.reset()
-    print(td)
-    print("Obs shape after reset:", td["observation"].shape)
 
-    num_actions = 20
-    num_obs = 26
 
-    value_net = TensorDictModule(
-        MLP(out_features=num_actions, num_cells=[32, 32]),
-        in_keys=["observation"],
-        out_keys=["action_value"],
-    ).to(device)
+'''
+{
+    'phase': 1, 
+    'player_hp': array([0.], dtype=float32), 
+    'player_max_hp': 454, 1
+    'player_sp': array([1.], dtype=float32), 
+    'player_max_sp': 95, 
+    'boss_hp': array([1004.], dtype=float32), 
+    'boss_max_hp': 1037, 
+    'player_pose': array([141.30128  , 574.8781   , -68.90828  ,   1.2802318], dtype=float32), 
+    'boss_pose': array([140.05641 , 574.2401  , -68.60698 ,  -2.250375], dtype=float32), 
+    'camera_pose': array([ 1.4457703e+02,  5.7604156e+02, -6.7674446e+01, -9.3036687e-01, -3.5969186e-01,  7.0962518e-02], dtype=float32), 
+    'player_animation': 13, 
+    'player_animation_duration': array([0.064], dtype=float32), 
+    'boss_animation': 6, 
+    'boss_animation_duration': array([1.424], dtype=float32), 
+    'lock_on': True
+}
 
-    policy = TensorDictSequential(
-        value_net,  # writes action values in our tensordict
-        QValueModule(spec=env.action_spec),  # Reads the "action_value" entry by default
-    ).to(device)
-
-    policy_explore = TensorDictSequential(policy, EGreedyModule(env.action_spec)).to(device)
-
-    set_exploration_type(ExplorationType.RANDOM)
-
-    rollout = env.rollout(max_steps=100, policy=policy_explore).to(device)
-    """ for t in range(rollout.size(0)):
-        obs = rollout[t]["observation"]
-        print(f"Step {t} observation:", obs) """
+player animations=50
+boss_animation=30 (or 32?)
+'''

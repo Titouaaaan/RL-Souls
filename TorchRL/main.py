@@ -1,48 +1,44 @@
+import time
+import os
+from tqdm import tqdm
+from utils import FlattenObsWrapper
+import numpy as np
+
 import gymnasium as gym
 import soulsgym
 from soulsgym.envs.darksouls3.iudex import IudexEnv
 from soulsgym.core.game_state import GameState
-import numpy as np
+
 import torch
-from torchrl.envs import GymWrapper, TransformedEnv
-from torchrl.envs.utils import check_env_specs
-from tensordict.nn import TensorDictModule
-from torchrl.modules import MLP
-from torchrl.modules import QValueModule
-from tensordict.nn import TensorDictSequential
-from torchrl.modules import EGreedyModule
 from torch.optim import Adam
+from tensordict.nn import TensorDictModule, TensorDictSequential
+
+from torchrl.envs import GymWrapper, TransformedEnv
+from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
+from torchrl.modules import MLP, QValueModule, EGreedyModule
 from torchrl.objectives import SoftUpdate, DQNLoss
 from torchrl.collectors import SyncDataCollector
-from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage
+from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
-import time
-from tqdm import tqdm
-from torchrl.data import TensorDictReplayBuffer
 
-class FlattenObsWrapper(gym.ObservationWrapper):
-    def __init__(self, env):
-        super().__init__(env)
-        # Create a flattened observation space based on an example obs
-        obs_sample = self.observation(env.reset()[0])  # first obs from env
-        flat_dim = obs_sample.shape[0]
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32)
+default_checkpoint_dir = "checkpoints"
+save_path = "dqn_checkpoint_5.pth"
 
-    def observation(self, obs):
-        flat = []
-        for v in obs.values():
-            arr = torch.tensor(v, dtype=torch.float32).flatten()
-            flat.append(arr)
-        return torch.cat(flat, dim=0)
+def save(policy, optim, total_count, default_checkpoint_dir, file_name):
+    # Create the full path by joining the default directory and the file name
+    full_path = os.path.join(default_checkpoint_dir, file_name)
 
-def save(policy, optim, total_count, file_name="dqn_checkpoint_3sad wa ds qp.pth"):
+    # Create the directory if it does not exist
+    os.makedirs(default_checkpoint_dir, exist_ok=True)
+
+    # Save the checkpoint
     torch.save({
-            "model_state_dict": policy.state_dict(),
-            "optimizer_state_dict": optim.state_dict(),
-            "step": total_count
-            }, 
-            file_name)
-    #print(f"Checkpoint saved at dqn_checkpoint.pth.")
+        "model_state_dict": policy.state_dict(),
+        "optimizer_state_dict": optim.state_dict(),
+        "step": total_count
+    }, full_path)
+
+    #print(f"Checkpoint saved at {full_path}.")
 
 @staticmethod
 def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> float:
@@ -55,7 +51,7 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
     Returns:
         The reward for the provided game states.
     """
-    boss_reward = 2* (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
+    boss_reward = 1.5* (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
     player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
     player_reward = player_hp_diff / game_state.player_max_hp
     if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
@@ -67,9 +63,9 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
         base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
     return boss_reward + player_reward + 2 * base_reward
 
-def make_flattened_env(device):
+def make_flattened_env(env_name, device, game_speed):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make("SoulsGymIudex-v0", game_speed=3.0) # 
+    raw_env = gym.make(env_name, game_speed=game_speed) #  device=device, ?
 
     IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
@@ -88,7 +84,7 @@ def make_flattened_env(device):
 
 def train_agent():
     ''' Train the DQN agent on the SoulsGym environment. '''
-    torch.manual_seed(0)
+    #torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(torch.cuda.is_available())  # should return True
     print(torch.version.cuda)
@@ -96,8 +92,8 @@ def train_agent():
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
     print(device)
 
-    env = make_flattened_env(device)
-    env.set_seed(0)
+    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0)
+    #env.set_seed(0)
 
     # Test reset + step
     td = env.reset().to(device)
@@ -113,7 +109,7 @@ def train_agent():
     LOAD = False
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
-        checkpoint = torch.load("dqn_checkpoint_2.pth", weights_only=False)
+        checkpoint = torch.load(save_path, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
     value_mlp = MLP(
@@ -150,7 +146,7 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
+    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection)
     frames_per_batch = 400 # data collection (steps collected per loop)
     optim_steps = 10 # optim steps per batch collected
 
@@ -246,30 +242,32 @@ def train_agent():
                 })
             if i % 100 == 0 and len(rb) > init_rand_steps:
                 # Save the model every 50 iterations
-                save(policy, optim, total_count)
+                save(policy, optim, total_count, default_checkpoint_dir, save_path)
                     
             t1 = time.time()
             if total_count >= training_steps: 
                 break
 
-        save(policy, optim, total_count)
-        print(f"Checkpoint saved at dqn_checkpoint.pth.")
+        save(policy, optim, total_count, default_checkpoint_dir, save_path)
+        print(f"Checkpoint saved at {save_path}.")
         print(f'Training stopped after {total_count} steps in {t1-t0}s.')
 
-def test_agent(policy_path="dqn_checkpoint.pth", episodes=1):
-    ''' Test the DQN agent on the SoulsGym environment. '''
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = make_flattened_env(device)
-    env.set_seed(0)
+def test_agent(policy_path, episodes):
 
-    # Get dimensions
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Create environment
+    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=2.0)
+
     num_actions = env.action_spec.shape[0]
     num_obs = env.observation_spec["observation"].shape[0]
 
-    # Build model
+    # Define policy (same structure as in training)
     value_mlp = MLP(
         out_features=num_actions,
-        num_cells=[64, 128, 256],
+        num_cells=[512, 512],
+        activation_class=torch.nn.ReLU,
     ).to(device)
 
     value_net = TensorDictModule(
@@ -280,34 +278,42 @@ def test_agent(policy_path="dqn_checkpoint.pth", episodes=1):
 
     policy = TensorDictSequential(
         value_net,
-        QValueModule(spec=env.action_spec)
+        QValueModule(spec=env.action_spec),
     ).to(device)
 
-    # Load checkpoint
+    # Load trained weights
+    print(f"Loading policy from {policy_path}")
     checkpoint = torch.load(policy_path, map_location=device)
     policy.load_state_dict(checkpoint["model_state_dict"])
-    policy.eval()
 
-    # Run test episodes
+    policy.eval()  # Set to eval mode
+    total_rewards = []
+
     for ep in range(episodes):
-        td = env.reset().to(device)
+        td = env.reset()
         done = False
+        terminated = False
         ep_reward = 0.0
 
-        while not done:
-            with torch.no_grad():
+        while not (done or terminated):
+            with torch.no_grad(), set_exploration_type(ExplorationType.DETERMINISTIC):
                 td = policy(td)
-                action = td["action"]
-            td = env.step(td)
-            reward = td["next", "reward"].item()
-            done = td["next", "done"].item()
-            ep_reward += reward
-            td = td["next"]
+                td = env.step(td.clone())
 
-        print(f"Episode {ep+1}: reward = {ep_reward:.2f}")
+            ep_reward += td["next", "reward"].item()
+            done = td["next", "done"].item()
+            terminated = td["next", "terminated"].item()
+
+            td = td["next"]  # Advance to the next state
+
+        print(f"Episode {ep+1}: Reward = {ep_reward}")
+        total_rewards.append(ep_reward)
+
+    avg_reward = sum(total_rewards) / episodes
+    print(f"\nAverage Reward over {episodes} episodes: {avg_reward}")
 
 
 if __name__ == "__main__":
     
     train_agent()
-    test_agent(policy_path="dqn_checkpoint.pth", episodes=5)
+    test_agent(policy_path="/checkpoints/dqn_checkpoint_5.pth", episodes=5)
