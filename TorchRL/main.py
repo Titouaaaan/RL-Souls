@@ -35,7 +35,9 @@ class FlattenObsWrapper(gym.ObservationWrapper):
             flat.append(arr)
         return torch.cat(flat, dim=0)
 
-def save(policy, optim, total_count, file_name="dqn_checkpoint_5.pth"):
+save_path = "/checkpoints/dqn_checkpoint_5.pth"
+
+def save(policy, optim, total_count, file_name=save_path):
     torch.save({
             "model_state_dict": policy.state_dict(),
             "optimizer_state_dict": optim.state_dict(),
@@ -113,7 +115,7 @@ def train_agent():
     LOAD = False
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
-        checkpoint = torch.load("dqn_checkpoint_2.pth", weights_only=False)
+        checkpoint = torch.load(save_path, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
     value_mlp = MLP(
@@ -253,7 +255,7 @@ def train_agent():
                 break
 
         save(policy, optim, total_count)
-        print(f"Checkpoint saved at dqn_checkpoint.pth.")
+        print(f"Checkpoint saved at {save_path}.")
         print(f'Training stopped after {total_count} steps in {t1-t0}s.')
 
 def test_agent(policy_path, episodes):
@@ -320,4 +322,4 @@ def test_agent(policy_path, episodes):
 if __name__ == "__main__":
     
     train_agent()
-    test_agent(policy_path="dqn_checkpoint_4.pth", episodes=5)
+    test_agent(policy_path="/checkpoints/dqn_checkpoint_5.pth", episodes=5)
