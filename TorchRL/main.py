@@ -22,7 +22,7 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 default_checkpoint_dir = "checkpoints"
-save_path = "dqn_checkpoint_5.pth"
+save_path = "dqn_checkpoint_6.pth"
 
 def save(policy, optim, total_count, default_checkpoint_dir, file_name):
     # Create the full path by joining the default directory and the file name
@@ -134,7 +134,7 @@ def train_agent():
 
     eps_init=0.995 # probability of taking a random action (exploration)\
     eps_end=0.1
-    annealing_num_steps=0.6 * training_steps # number of steps to decay the exploration probability
+    annealing_num_steps=0.5 * training_steps # number of steps to decay the exploration probability
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=annealing_num_steps, # end of the decay
@@ -146,9 +146,9 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection)
-    frames_per_batch = 400 # data collection (steps collected per loop)
-    optim_steps = 10 # optim steps per batch collected
+    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
+    frames_per_batch = 4000 # data collection (steps collected per loop)
+    optim_steps = 20 # optim steps per batch collected
 
     collector = SyncDataCollector(
         env,
@@ -160,14 +160,20 @@ def train_agent():
 
     size = 1_000_000
     rb = TensorDictReplayBuffer(
-        storage=ListStorage(size),
-        sampler=PrioritizedSampler(max_capacity=size, alpha=0.8, beta=1.1),
+        storage=LazyTensorStorage( # ListStorage ?
+            max_size=size, 
+            device=device), 
+        sampler=PrioritizedSampler(
+            max_capacity=size, 
+            alpha=0.8, 
+            beta=1.1),
         priority_key="td_error",
-        batch_size=128
+        batch_size=300
     )
     
     loss = DQNLoss(
         value_network=policy, 
+        gamma=0.99, # discount factor
         delay_value=True, # create a target network
         double_dqn=True, # use the target network
         action_space=env.action_spec, 
@@ -176,14 +182,16 @@ def train_agent():
 
     optim = Adam(
         loss.parameters(), 
-        lr=3e-4 # how much to update the weights (low value = slow update but more stable)
+        lr=3e-4, # how much to update the weights (low value = slow update but more stable)
+        weight_decay=1e-5, # L2 regularization,
+        betas=(0.9, 0.999), # momentum
     )
     if LOAD:
         optim.load_state_dict(checkpoint["optimizer_state_dict"])
 
     updater = SoftUpdate(
         loss, 
-        eps=0.99  # target network update rate (high value means slow update but more stable once again)
+        eps=0.995  # target network update rate (high value means slow update but more stable once again)
     )
     
     if LOAD:
@@ -200,12 +208,14 @@ def train_agent():
 
     check_env_specs(env) # verify the environment specs is good
 
-    with tqdm(total=training_steps, desc="Training", unit="steps", initial=total_count) as pbar:
+    with tqdm(total=training_steps, desc="Training", unit="steps", initial=collector.total_frames) as pbar:
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
 
             rb.extend(data).to(device)
+
+            pbar.update(data.numel()) # update the progress bar
             if len(rb) > init_rand_steps:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
@@ -222,21 +232,18 @@ def train_agent():
                     optim.zero_grad()
                     # Update exploration factor
                     # print('test', data.numel())
-                    exploration_module.step(data.numel()) #.to(device) ?
-                    # print('exp', exploration_module)
-                    # Update target params
-                    updater.step() # .to(device) ?
-                    # print('updater', updater)
+                    
                     rb.update_tensordict_priority(sample)
+                
+                exploration_module.step(data.numel()) #.to(device) ?
+                # Update target params
+                updater.step() # .to(device) ?
 
                 total_count += data.numel() # how much data we collected
-                #total_episodes += data["next", "done"].sum()
 
-                pbar.n = total_count
                 pbar.refresh()
                 pbar.set_postfix({
                 "Reward": data["next", "reward"].mean().item(),
-                # "Episodes": data["next", "done"].sum().item(), # this is broken bc its resets lol need to find another way
                 "Loss": f"{loss_vals['loss'].item():.4f}",
                 "Eps": f"{exploration_module.eps}" 
                 })
@@ -244,9 +251,10 @@ def train_agent():
                 # Save the model every 50 iterations
                 save(policy, optim, total_count, default_checkpoint_dir, save_path)
                     
-            t1 = time.time()
             if total_count >= training_steps: 
+                t1 = time.time()
                 break
+        t1 = time.time()
 
         save(policy, optim, total_count, default_checkpoint_dir, save_path)
         print(f"Checkpoint saved at {save_path}.")
@@ -258,7 +266,7 @@ def test_agent(policy_path, episodes):
     print(f"Using device: {device}")
 
     # Create environment
-    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=2.0)
+    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=1.0)
 
     num_actions = env.action_spec.shape[0]
     num_obs = env.observation_spec["observation"].shape[0]
@@ -314,6 +322,6 @@ def test_agent(policy_path, episodes):
 
 
 if __name__ == "__main__":
-    
+    file_path = default_checkpoint_dir + "/" + save_path
     train_agent()
-    test_agent(policy_path="/checkpoints/dqn_checkpoint_5.pth", episodes=5)
+    test_agent(policy_path=file_path, episodes=10)
