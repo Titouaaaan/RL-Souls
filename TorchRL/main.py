@@ -10,7 +10,7 @@ from soulsgym.envs.darksouls3.iudex import IudexEnv
 from soulsgym.core.game_state import GameState
 
 import torch
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from tensordict.nn import TensorDictModule, TensorDictSequential
 
 from torchrl.envs import GymWrapper, TransformedEnv
@@ -40,7 +40,6 @@ def save(policy, optim, total_count, default_checkpoint_dir, file_name):
 
     #print(f"Checkpoint saved at {full_path}.")
 
-@staticmethod
 def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> float:
     """Compute the reward from the current game state and the next game state.
 
@@ -51,7 +50,7 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
     Returns:
         The reward for the provided game states.
     """
-    boss_reward = 1.5* (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
+    boss_reward = (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
     player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
     player_reward = player_hp_diff / game_state.player_max_hp
     if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
@@ -65,7 +64,7 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
 
 def make_flattened_env(env_name, device, game_speed):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make(env_name, game_speed=game_speed) #  device=device, ?
+    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=True) #  device=device, ?
 
     IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
@@ -112,9 +111,10 @@ def train_agent():
         checkpoint = torch.load(save_path, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
+    num_cells = [256,256,256]
     value_mlp = MLP(
         out_features=num_actions, # Q values for each action
-        num_cells=[512, 512], # hidden layers size,
+        num_cells=num_cells, # hidden layers size,
         activation_class=torch.nn.ReLU, # activation function
     ).to(device)
 
@@ -134,7 +134,7 @@ def train_agent():
 
     eps_init=0.995 # probability of taking a random action (exploration)\
     eps_end=0.1
-    annealing_num_steps=0.5 * training_steps # number of steps to decay the exploration probability
+    annealing_num_steps=0.3 * training_steps # number of steps to decay the exploration probability
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=annealing_num_steps, # end of the decay
@@ -146,9 +146,9 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection)
-    frames_per_batch = 4000 # data collection (steps collected per loop)
-    optim_steps = 20 # optim steps per batch collected
+    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection) about 1-5% of RB
+    frames_per_batch = 1000 # data collection (steps collected per loop)
+    optim_steps = 10 # optim steps per batch collected
 
     collector = SyncDataCollector(
         env,
@@ -168,21 +168,21 @@ def train_agent():
             alpha=0.8, 
             beta=1.1),
         priority_key="td_error",
-        batch_size=300
+        batch_size=200
     )
     
     loss = DQNLoss(
         value_network=policy, 
-        gamma=0.99, # discount factor
+        loss_function="smooth_l1",
         delay_value=True, # create a target network
         double_dqn=True, # use the target network
         action_space=env.action_spec, 
         
     ).to(device)
 
-    optim = Adam(
+    optim = AdamW(
         loss.parameters(), 
-        lr=3e-4, # how much to update the weights (low value = slow update but more stable)
+        lr=1e-4, # how much to update the weights (low value = slow update but more stable)
         weight_decay=1e-5, # L2 regularization,
         betas=(0.9, 0.999), # momentum
     )
@@ -208,7 +208,7 @@ def train_agent():
 
     check_env_specs(env) # verify the environment specs is good
 
-    with tqdm(total=training_steps, desc="Training", unit="steps", initial=collector.total_frames) as pbar:
+    with tqdm(total=training_steps, desc="Training", unit="steps") as pbar: # initial=collector.total_frames
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
@@ -272,9 +272,10 @@ def test_agent(policy_path, episodes):
     num_obs = env.observation_spec["observation"].shape[0]
 
     # Define policy (same structure as in training)
+    num_cells = [256, 256, 256]
     value_mlp = MLP(
         out_features=num_actions,
-        num_cells=[512, 512],
+        num_cells=num_cells,
         activation_class=torch.nn.ReLU,
     ).to(device)
 
@@ -323,5 +324,5 @@ def test_agent(policy_path, episodes):
 
 if __name__ == "__main__":
     file_path = default_checkpoint_dir + "/" + save_path
-    train_agent()
+    #train_agent()
     test_agent(policy_path=file_path, episodes=10)
