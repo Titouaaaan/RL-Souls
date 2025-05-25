@@ -1,8 +1,9 @@
 import time
-import os
+import os, shutil
 from tqdm import tqdm
 from utils import FlattenObsWrapper
 import numpy as np
+from datetime import datetime
 
 import gymnasium as gym
 import soulsgym
@@ -12,6 +13,7 @@ from soulsgym.core.game_state import GameState
 import torch
 from torch.optim import Adam, AdamW
 from tensordict.nn import TensorDictModule, TensorDictSequential
+from torch.utils.tensorboard import SummaryWriter
 
 from torchrl.envs import GymWrapper, TransformedEnv
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
@@ -22,7 +24,7 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 default_checkpoint_dir = "checkpoints"
-save_path = "dqn_checkpoint_6.pth"
+save_path = "dqn_checkpoint_7.pth"
 
 def save(policy, optim, total_count, default_checkpoint_dir, file_name):
     # Create the full path by joining the default directory and the file name
@@ -60,11 +62,11 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
         d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
         d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
         base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
-    return boss_reward + player_reward + 2 * base_reward
+    return (1.5 * boss_reward) + player_reward + (2 * base_reward)
 
-def make_flattened_env(env_name, device, game_speed):
+def make_flattened_env(env_name, device, game_speed, random_init):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=True) #  device=device, ?
+    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init) #  device=device, ?
 
     IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
@@ -81,7 +83,7 @@ def make_flattened_env(env_name, device, game_speed):
 
     return transformed_env
 
-def train_agent():
+def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_path):
     ''' Train the DQN agent on the SoulsGym environment. '''
     #torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -91,7 +93,7 @@ def train_agent():
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
     print(device)
 
-    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0)
+    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0, random_init=True)
     #env.set_seed(0)
 
     # Test reset + step
@@ -146,7 +148,7 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection) about 1-5% of RB
+    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection) about 1-5% of RB
     frames_per_batch = 1000 # data collection (steps collected per loop)
     optim_steps = 10 # optim steps per batch collected
 
@@ -208,6 +210,14 @@ def train_agent():
 
     check_env_specs(env) # verify the environment specs is good
 
+    # to start the tensorboard: tensorboard --logdir=runs/
+    os.makedirs('runs', exist_ok=True)
+    timenow = str(datetime.now())[0:-10]
+    timenow = ' ' + timenow[0:13] + '_' + timenow[-2::]
+    writepath = 'runs/{}-{}_'.format('DQN', save_path.split('.')[0]) + timenow
+    if os.path.exists(writepath): shutil.rmtree(writepath)
+    writer = SummaryWriter(log_dir=writepath)
+
     with tqdm(total=training_steps, desc="Training", unit="steps") as pbar: # initial=collector.total_frames
         for i, data in enumerate(collector):
             # print(f'i: {i}')
@@ -219,6 +229,8 @@ def train_agent():
             if len(rb) > init_rand_steps:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
+                avg_loss = torch.empty(0).to(device)
+                avg_reward = torch.empty(0).to(device)
                 for step in range(optim_steps):
                     
                     # print(f'optim step: {step}')
@@ -226,6 +238,7 @@ def train_agent():
                     # print('sample', sample)
                     loss_vals = loss(sample).to(device)
                     loss_vals["loss"].backward()
+
                     torch.nn.utils.clip_grad_norm_(loss.parameters(), 10)
 
                     optim.step()
@@ -234,7 +247,18 @@ def train_agent():
                     # print('test', data.numel())
                     
                     rb.update_tensordict_priority(sample)
+
+                    # for tensorboard logging
+                    avg_loss = torch.cat([avg_loss, loss_vals["loss"].detach().unsqueeze(0)])
+                    avg_reward = torch.cat([avg_reward, data["next", "reward"].detach().unsqueeze(0)])
+
                 
+                avg_loss = torch.mean(avg_loss)
+                avg_reward = torch.mean(avg_reward)
+
+                writer.add_scalar('Loss/train', avg_loss, total_count)
+                writer.add_scalar('Reward/train', avg_reward, total_count)
+
                 exploration_module.step(data.numel()) #.to(device) ?
                 # Update target params
                 updater.step() # .to(device) ?
@@ -243,8 +267,8 @@ def train_agent():
 
                 pbar.refresh()
                 pbar.set_postfix({
-                "Reward": data["next", "reward"].mean().item(),
-                "Loss": f"{loss_vals['loss'].item():.4f}",
+                "Reward": f"{avg_reward:.4f}",
+                "Loss": f"{avg_loss:.4f}",
                 "Eps": f"{exploration_module.eps}" 
                 })
             if i % 100 == 0 and len(rb) > init_rand_steps:
@@ -266,7 +290,7 @@ def test_agent(policy_path, episodes):
     print(f"Using device: {device}")
 
     # Create environment
-    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=1.0)
+    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=1.0, random_init=False)
 
     num_actions = env.action_spec.shape[0]
     num_obs = env.observation_spec["observation"].shape[0]
@@ -324,5 +348,5 @@ def test_agent(policy_path, episodes):
 
 if __name__ == "__main__":
     file_path = default_checkpoint_dir + "/" + save_path
-    #train_agent()
+    train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
     test_agent(policy_path=file_path, episodes=10)
