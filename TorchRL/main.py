@@ -1,8 +1,9 @@
 import time
-import os
+import os, shutil
 from tqdm import tqdm
 from utils import FlattenObsWrapper
 import numpy as np
+from datetime import datetime
 
 import gymnasium as gym
 import soulsgym
@@ -10,8 +11,9 @@ from soulsgym.envs.darksouls3.iudex import IudexEnv
 from soulsgym.core.game_state import GameState
 
 import torch
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from tensordict.nn import TensorDictModule, TensorDictSequential
+from torch.utils.tensorboard import SummaryWriter
 
 from torchrl.envs import GymWrapper, TransformedEnv
 from torchrl.envs.utils import check_env_specs, ExplorationType, set_exploration_type
@@ -22,7 +24,7 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 default_checkpoint_dir = "checkpoints"
-save_path = "dqn_checkpoint_5.pth"
+save_path = "dqn_checkpoint_7.pth"
 
 def save(policy, optim, total_count, default_checkpoint_dir, file_name):
     # Create the full path by joining the default directory and the file name
@@ -40,7 +42,6 @@ def save(policy, optim, total_count, default_checkpoint_dir, file_name):
 
     #print(f"Checkpoint saved at {full_path}.")
 
-@staticmethod
 def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> float:
     """Compute the reward from the current game state and the next game state.
 
@@ -51,7 +52,7 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
     Returns:
         The reward for the provided game states.
     """
-    boss_reward = 1.5* (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
+    boss_reward = (game_state.boss_hp - next_game_state.boss_hp) / game_state.boss_max_hp
     player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
     player_reward = player_hp_diff / game_state.player_max_hp
     if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
@@ -61,11 +62,11 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
         d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
         d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
         base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
-    return boss_reward + player_reward + 2 * base_reward
+    return (1.5 * boss_reward) + player_reward + (2 * base_reward)
 
-def make_flattened_env(env_name, device, game_speed):
+def make_flattened_env(env_name, device, game_speed, random_init):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make(env_name, game_speed=game_speed) #  device=device, ?
+    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init) #  device=device, ?
 
     IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
@@ -82,7 +83,7 @@ def make_flattened_env(env_name, device, game_speed):
 
     return transformed_env
 
-def train_agent():
+def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_path):
     ''' Train the DQN agent on the SoulsGym environment. '''
     #torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -92,7 +93,7 @@ def train_agent():
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
     print(device)
 
-    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0)
+    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0, random_init=True)
     #env.set_seed(0)
 
     # Test reset + step
@@ -112,9 +113,10 @@ def train_agent():
         checkpoint = torch.load(save_path, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
+    num_cells = [256,256,256]
     value_mlp = MLP(
         out_features=num_actions, # Q values for each action
-        num_cells=[512, 512], # hidden layers size,
+        num_cells=num_cells, # hidden layers size,
         activation_class=torch.nn.ReLU, # activation function
     ).to(device)
 
@@ -134,7 +136,7 @@ def train_agent():
 
     eps_init=0.995 # probability of taking a random action (exploration)\
     eps_end=0.1
-    annealing_num_steps=0.6 * training_steps # number of steps to decay the exploration probability
+    annealing_num_steps=0.3 * training_steps # number of steps to decay the exploration probability
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=annealing_num_steps, # end of the decay
@@ -146,8 +148,8 @@ def train_agent():
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection)
-    frames_per_batch = 400 # data collection (steps collected per loop)
+    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection) about 1-5% of RB
+    frames_per_batch = 1000 # data collection (steps collected per loop)
     optim_steps = 10 # optim steps per batch collected
 
     collector = SyncDataCollector(
@@ -160,30 +162,38 @@ def train_agent():
 
     size = 1_000_000
     rb = TensorDictReplayBuffer(
-        storage=ListStorage(size),
-        sampler=PrioritizedSampler(max_capacity=size, alpha=0.8, beta=1.1),
+        storage=LazyTensorStorage( # ListStorage ?
+            max_size=size, 
+            device=device), 
+        sampler=PrioritizedSampler(
+            max_capacity=size, 
+            alpha=0.8, 
+            beta=1.1),
         priority_key="td_error",
-        batch_size=128
+        batch_size=200
     )
     
     loss = DQNLoss(
         value_network=policy, 
+        loss_function="smooth_l1",
         delay_value=True, # create a target network
         double_dqn=True, # use the target network
         action_space=env.action_spec, 
         
     ).to(device)
 
-    optim = Adam(
+    optim = AdamW(
         loss.parameters(), 
-        lr=3e-4 # how much to update the weights (low value = slow update but more stable)
+        lr=1e-4, # how much to update the weights (low value = slow update but more stable)
+        weight_decay=1e-5, # L2 regularization,
+        betas=(0.9, 0.999), # momentum
     )
     if LOAD:
         optim.load_state_dict(checkpoint["optimizer_state_dict"])
 
     updater = SoftUpdate(
         loss, 
-        eps=0.99  # target network update rate (high value means slow update but more stable once again)
+        eps=0.995  # target network update rate (high value means slow update but more stable once again)
     )
     
     if LOAD:
@@ -200,15 +210,27 @@ def train_agent():
 
     check_env_specs(env) # verify the environment specs is good
 
-    with tqdm(total=training_steps, desc="Training", unit="steps", initial=total_count) as pbar:
+    # to start the tensorboard: tensorboard --logdir=runs/
+    os.makedirs('runs', exist_ok=True)
+    timenow = str(datetime.now())[0:-10]
+    timenow = ' ' + timenow[0:13] + '_' + timenow[-2::]
+    writepath = 'runs/{}-{}_'.format('DQN', save_path.split('.')[0]) + timenow
+    if os.path.exists(writepath): shutil.rmtree(writepath)
+    writer = SummaryWriter(log_dir=writepath)
+
+    with tqdm(total=training_steps, desc="Training", unit="steps") as pbar: # initial=collector.total_frames
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
 
             rb.extend(data).to(device)
+
+            pbar.update(data.numel()) # update the progress bar
             if len(rb) > init_rand_steps:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
+                avg_loss = torch.empty(0).to(device)
+                avg_reward = torch.empty(0).to(device)
                 for step in range(optim_steps):
                     
                     # print(f'optim step: {step}')
@@ -216,37 +238,47 @@ def train_agent():
                     # print('sample', sample)
                     loss_vals = loss(sample).to(device)
                     loss_vals["loss"].backward()
+
                     torch.nn.utils.clip_grad_norm_(loss.parameters(), 10)
 
                     optim.step()
                     optim.zero_grad()
                     # Update exploration factor
                     # print('test', data.numel())
-                    exploration_module.step(data.numel()) #.to(device) ?
-                    # print('exp', exploration_module)
-                    # Update target params
-                    updater.step() # .to(device) ?
-                    # print('updater', updater)
+                    
                     rb.update_tensordict_priority(sample)
 
-                total_count += data.numel() # how much data we collected
-                #total_episodes += data["next", "done"].sum()
+                    # for tensorboard logging
+                    avg_loss = torch.cat([avg_loss, loss_vals["loss"].detach().unsqueeze(0)])
+                    avg_reward = torch.cat([avg_reward, data["next", "reward"].detach().unsqueeze(0)])
 
-                pbar.n = total_count
+                
+                avg_loss = torch.mean(avg_loss)
+                avg_reward = torch.mean(avg_reward)
+
+                writer.add_scalar('Loss/train', avg_loss, total_count)
+                writer.add_scalar('Reward/train', avg_reward, total_count)
+
+                exploration_module.step(data.numel()) #.to(device) ?
+                # Update target params
+                updater.step() # .to(device) ?
+
+                total_count += data.numel() # how much data we collected
+
                 pbar.refresh()
                 pbar.set_postfix({
-                "Reward": data["next", "reward"].mean().item(),
-                # "Episodes": data["next", "done"].sum().item(), # this is broken bc its resets lol need to find another way
-                "Loss": f"{loss_vals['loss'].item():.4f}",
+                "Reward": f"{avg_reward:.4f}",
+                "Loss": f"{avg_loss:.4f}",
                 "Eps": f"{exploration_module.eps}" 
                 })
             if i % 100 == 0 and len(rb) > init_rand_steps:
                 # Save the model every 50 iterations
                 save(policy, optim, total_count, default_checkpoint_dir, save_path)
                     
-            t1 = time.time()
             if total_count >= training_steps: 
+                t1 = time.time()
                 break
+        t1 = time.time()
 
         save(policy, optim, total_count, default_checkpoint_dir, save_path)
         print(f"Checkpoint saved at {save_path}.")
@@ -258,15 +290,16 @@ def test_agent(policy_path, episodes):
     print(f"Using device: {device}")
 
     # Create environment
-    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=2.0)
+    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=1.0, random_init=False)
 
     num_actions = env.action_spec.shape[0]
     num_obs = env.observation_spec["observation"].shape[0]
 
     # Define policy (same structure as in training)
+    num_cells = [256, 256, 256]
     value_mlp = MLP(
         out_features=num_actions,
-        num_cells=[512, 512],
+        num_cells=num_cells,
         activation_class=torch.nn.ReLU,
     ).to(device)
 
@@ -314,6 +347,6 @@ def test_agent(policy_path, episodes):
 
 
 if __name__ == "__main__":
-    
-    train_agent()
-    test_agent(policy_path="/checkpoints/dqn_checkpoint_5.pth", episodes=5)
+    file_path = default_checkpoint_dir + "/" + save_path
+    train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
+    test_agent(policy_path=file_path, episodes=10)
