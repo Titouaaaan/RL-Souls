@@ -24,7 +24,7 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 default_checkpoint_dir = "checkpoints"
-save_path = "dqn_checkpoint_7.pth"
+save_path = "dqn_checkpoint_8.pth"
 
 def save(policy, optim, total_count, default_checkpoint_dir, file_name):
     # Create the full path by joining the default directory and the file name
@@ -56,13 +56,13 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
     player_hp_diff = (next_game_state.player_hp - game_state.player_hp)
     player_reward = player_hp_diff / game_state.player_max_hp
     if next_game_state.boss_hp == 0 or next_game_state.player_hp == 0:
-        base_reward = 1 if next_game_state.boss_hp == 0 else -0.1
+        base_reward = 5 if next_game_state.boss_hp == 0 else -0.1
     else:
         # Experimental: Reward for moving towards the arena center, no reward within 4m distance
         d_center_now = np.linalg.norm(next_game_state.player_pose[:2] - np.array([139., 596.]))
         d_center_prev = np.linalg.norm(game_state.player_pose[:2] - np.array([139., 596.]))
-        base_reward = 0.01 * (d_center_prev - d_center_now) * (d_center_now > 4)
-    return (1.5 * boss_reward) + player_reward + (2 * base_reward)
+        base_reward = 2 * (0.01 * (d_center_prev - d_center_now) * (d_center_now > 4))
+    return (1.2 * boss_reward) + player_reward + (base_reward)
 
 def make_flattened_env(env_name, device, game_speed, random_init):
     # Step 1: Load SoulsGym environment
@@ -148,7 +148,7 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e1 # random actions before using the policy (radnom data collection) about 1-5% of RB
+    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection) about 1-5% of RB
     frames_per_batch = 1000 # data collection (steps collected per loop)
     optim_steps = 10 # optim steps per batch collected
 
