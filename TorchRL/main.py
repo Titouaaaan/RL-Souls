@@ -23,8 +23,32 @@ from torchrl.collectors import SyncDataCollector
 from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
-default_checkpoint_dir = "checkpoints"
-save_path = "dqn_checkpoint_8.pth"
+params = {
+    "env_name": "SoulsGymIudex-v0",  # Environment name
+    "default_checkpoint_dir": "checkpoints",
+    "save_path": "dqn_checkpoint_8.pth",
+    "LOAD": True,  # Set to True to load the model
+    "training_steps": 8e5,  # Total training steps
+    "init_rand_steps": 2e4,  # Random actions before using the policy
+    "frames_per_batch": 1000,  # Data collection (steps collected per loop)
+    "optim_steps": 30,  # Optim steps per batch collected
+    "eps_init": 0.995,  # Probability of taking a random action (exploration)
+    "eps_end": 0.1,  # Minimum exploration probability
+    "annealing_num_steps_ratio": 0.2,  # Number of steps to decay the exploration probability
+    "num_cells": [256, 256, 256],  # Hidden layers size for the MLP
+    "size_rb": 1_000_000,  # Size of the replay buffer
+    "batch_size": 200,  # Batch size for sampling from the replay buffer
+    "lr": 1e-4,  # Learning rate for the optimizer
+    "weight_decay": 1e-5,  # L2 regularization
+    "betas": (0.9, 0.999),  # Momentum parameters for the optimizer
+    "update_rate": 0.995,  # Target network update rate
+    "save_checkpoint_every": 50,  # Save the model every N iterations
+    "dqn_loss_function": "smooth_l1",  # Loss function for DQN
+    "create_target_net": True,  # Create a target network
+    "double_dqn": True,  # Use the target network
+    "rb_alpha": 0.8,  # Alpha for prioritized replay buffer
+    "rb_beta": 1.1,  # Beta for prioritized replay buffer
+}
 
 def save(policy, optim, total_count, default_checkpoint_dir, file_name):
     # Create the full path by joining the default directory and the file name
@@ -83,7 +107,7 @@ def make_flattened_env(env_name, device, game_speed, random_init, phase):
 
     return transformed_env
 
-def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path):
+def train_agent(phase, default_checkpoint_dir, save_path):
     ''' Train the DQN agent on the SoulsGym environment. '''
     #torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -91,13 +115,12 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
     print(torch.version.cuda)
     print(torch.cuda.current_device()) # returns 0 (correct)
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
-    print(device)
 
-    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0, random_init=True, phase=phase)
+    env = make_flattened_env(env_name=params["env_name"], device=device, game_speed=3.0, random_init=True, phase=phase)
     #env.set_seed(0)
 
     # Test reset + step
-    td = env.reset().to(device)
+    _ = env.reset().to(device)
     # print(td)
     # print("Obs shape after reset:", td["observation"].shape)
     num_actions = env.action_spec.shape[0]
@@ -105,16 +128,16 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
     print("Num actions:", num_actions)
     print("Num obs:", num_obs)
     
-    training_steps = 2e6 # total training steps
+    training_steps = params['training_steps'] # total training steps
 
-    LOAD = True
-    if LOAD:
+    load_model = params["LOAD"]  # Load the model if True
+    if load_model:
         print(f'Loading checkpoint (policy + optim + step count)...')
         to_load = default_checkpoint_dir + "/" + save_path
         checkpoint = torch.load(to_load, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
-    num_cells = [256,256,256]
+    num_cells = params["num_cells"]  # hidden layers size for the MLP
     value_mlp = MLP(
         out_features=num_actions, # Q values for each action
         num_cells=num_cells, # hidden layers size,
@@ -132,12 +155,12 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
         QValueModule(spec=env.action_spec)  # selects best action (argmax) based on action values
     ).to(device)
 
-    if LOAD:
+    if load_model:
         policy.load_state_dict(checkpoint["model_state_dict"])
 
-    eps_init=0.995 # probability of taking a random action (exploration)\
-    eps_end=0.1
-    annealing_num_steps=0.3 * training_steps # number of steps to decay the exploration probability
+    eps_init = params["eps_init"] # probability of taking a random action (exploration)\
+    eps_end = params["eps_end"] # minimum exploration probability
+    annealing_num_steps = params["annealing_num_steps_ratio"] *  training_steps # number of steps to decay the exploration probability
     exploration_module = EGreedyModule(
         env.action_spec, 
         annealing_num_steps=annealing_num_steps, # end of the decay
@@ -149,9 +172,9 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 2e4 # random actions before using the policy (radnom data collection) about 1-5% of RB
-    frames_per_batch = 1000 # data collection (steps collected per loop)
-    optim_steps = 30 # optim steps per batch collected
+    init_rand_steps = params["init_rand_steps"] # random actions before using the policy (radnom data collection) about 1-5% of RB
+    frames_per_batch = params["frames_per_batch"] # data collection (steps collected per loop)
+    optim_steps = params["optim_steps"] # optim steps per batch collected
 
     collector = SyncDataCollector(
         env,
@@ -161,43 +184,43 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
         init_random_frames=init_rand_steps, 
     )
 
-    size = 1_000_000
+    size = params["size_rb"]  # size of the replay buffer
     rb = TensorDictReplayBuffer(
         storage=LazyTensorStorage( # ListStorage ?
             max_size=size, 
             device=device), 
         sampler=PrioritizedSampler(
             max_capacity=size, 
-            alpha=0.8, 
-            beta=1.1),
+            alpha=params["rb_alpha"], # alpha for prioritized replay buffer
+            beta=params["rb_beta"]),
         priority_key="td_error",
-        batch_size=200
+        batch_size=params["batch_size"], 
     )
     
     loss = DQNLoss(
         value_network=policy, 
-        loss_function="smooth_l1",
-        delay_value=True, # create a target network
-        double_dqn=True, # use the target network
+        loss_function=params["dqn_loss_function"], # loss function for DQN
+        delay_value=params["create_target_net"], # create a target network
+        double_dqn=params["double_dqn"], # use the target network
         action_space=env.action_spec, 
         
     ).to(device)
 
     optim = AdamW(
         loss.parameters(), 
-        lr=1e-4, # how much to update the weights (low value = slow update but more stable)
-        weight_decay=1e-5, # L2 regularization,
-        betas=(0.9, 0.999), # momentum
+        lr=params["lr"], # how much to update the weights (low value = slow update but more stable)
+        weight_decay=params["weight_decay"], 
+        betas=params["betas"], # momentum
     )
-    if LOAD:
+    if load_model:
         optim.load_state_dict(checkpoint["optimizer_state_dict"])
 
     updater = SoftUpdate(
         loss, 
-        eps=0.995  # target network update rate (high value means slow update but more stable once again)
+        eps=params['update_rate']  # target network update rate (high value means slow update but more stable once again)
     )
     
-    if LOAD:
+    if load_model:
         total_count = checkpoint["step"]
         print(f"Resuming training from step {total_count}.")
         """ print(total_count)
@@ -222,7 +245,7 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
     writer = SummaryWriter(log_dir=writepath)
 
     with tqdm(total=training_steps, desc="Training", unit="steps") as pbar: # initial=collector.total_frames
-        if LOAD:
+        if load_model:
             pbar.update(total_count)
         for i, data in enumerate(collector):
             # print(f'i: {i}')
@@ -231,7 +254,7 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
             rb.extend(data).to(device)
 
             pbar.update(data.numel()) # update the progress bar
-            if len(rb) > init_rand_steps or LOAD:
+            if len(rb) > init_rand_steps or load_model:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
                 avg_loss = torch.empty(0).to(device)
@@ -276,7 +299,7 @@ def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_pat
                 "Loss": f"{avg_loss:.4f}",
                 "Eps": f"{exploration_module.eps}" 
                 })
-            if i % 50 == 0 and len(rb) > init_rand_steps:
+            if i % params["save_checkpoint_every"] == 0 and len(rb) > init_rand_steps:
                 # Save the model every 50 iterations
                 save(policy, optim, total_count, default_checkpoint_dir, save_path)
                     
@@ -295,13 +318,13 @@ def test_agent(policy_path, episodes):
     print(f"Using device: {device}")
 
     # Create environment
-    env = make_flattened_env(env_name="SoulsGymIudexDemo-v0", device=device, game_speed=1.0, random_init=False)
+    env = make_flattened_env(env_name=params["env_name"], device=device, game_speed=1.0, random_init=False)
 
     num_actions = env.action_spec.shape[0]
     num_obs = env.observation_spec["observation"].shape[0]
 
     # Define policy (same structure as in training)
-    num_cells = [256, 256, 256]
+    num_cells = params["num_cells"]  # hidden layers size for the MLP
     value_mlp = MLP(
         out_features=num_actions,
         num_cells=num_cells,
@@ -352,7 +375,7 @@ def test_agent(policy_path, episodes):
 
 
 if __name__ == "__main__":
-    file_path = default_checkpoint_dir + "/" + save_path
+    file_path = params["default_checkpoint_dir"] + "/" + params["save_path"]
     #train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
-    train_agent(phase=2, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
+    train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     test_agent(policy_path=file_path, episodes=10)
