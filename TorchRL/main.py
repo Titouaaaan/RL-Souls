@@ -64,9 +64,9 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
         base_reward = 2 * (0.01 * (d_center_prev - d_center_now) * (d_center_now > 4))
     return (1.2 * boss_reward) + player_reward + (base_reward)
 
-def make_flattened_env(env_name, device, game_speed, random_init):
+def make_flattened_env(env_name, device, game_speed, random_init, phase):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init) #  device=device, ?
+    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init, phase=phase) #  device=device, ?
 
     IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
@@ -83,7 +83,7 @@ def make_flattened_env(env_name, device, game_speed, random_init):
 
     return transformed_env
 
-def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_path):
+def train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path):
     ''' Train the DQN agent on the SoulsGym environment. '''
     #torch.manual_seed(0)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -93,7 +93,7 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
     print(device)
 
-    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0, random_init=True)
+    env = make_flattened_env(env_name="SoulsGymIudex-v0", device=device, game_speed=3.0, random_init=True, phase=phase)
     #env.set_seed(0)
 
     # Test reset + step
@@ -353,5 +353,6 @@ def test_agent(policy_path, episodes):
 
 if __name__ == "__main__":
     file_path = default_checkpoint_dir + "/" + save_path
-    train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
+    #train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
+    train_agent(phase=2, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
     test_agent(policy_path=file_path, episodes=10)
