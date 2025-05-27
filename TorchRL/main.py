@@ -107,10 +107,11 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
     
     training_steps = 2e6 # total training steps
 
-    LOAD = False
+    LOAD = True
     if LOAD:
         print(f'Loading checkpoint (policy + optim + step count)...')
-        checkpoint = torch.load(save_path, weights_only=False)
+        to_load = default_checkpoint_dir + "/" + save_path
+        checkpoint = torch.load(to_load, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
     num_cells = [256,256,256]
@@ -148,9 +149,9 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
         policy, exploration_module
     ).to(device)
 
-    init_rand_steps = 1e4 # random actions before using the policy (radnom data collection) about 1-5% of RB
+    init_rand_steps = 2e4 # random actions before using the policy (radnom data collection) about 1-5% of RB
     frames_per_batch = 1000 # data collection (steps collected per loop)
-    optim_steps = 10 # optim steps per batch collected
+    optim_steps = 30 # optim steps per batch collected
 
     collector = SyncDataCollector(
         env,
@@ -198,11 +199,13 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
     
     if LOAD:
         total_count = checkpoint["step"]
+        print(f"Resuming training from step {total_count}.")
         """ print(total_count)
         print(f"exploration_module._eps device: {exploration_module.eps.device}")
         print(f"device: {device}") """
         epsilon = max(eps_end, eps_init - (eps_init - eps_end) * (total_count / annealing_num_steps)) # this calulcates the epsilon value for our current step
         exploration_module.eps = torch.tensor(epsilon).to(device)
+        print(f"Loaded exploration probability: {exploration_module.eps}")
     else:
         total_count = 0
     #total_episodes = 0
@@ -219,6 +222,8 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
     writer = SummaryWriter(log_dir=writepath)
 
     with tqdm(total=training_steps, desc="Training", unit="steps") as pbar: # initial=collector.total_frames
+        if LOAD:
+            pbar.update(total_count)
         for i, data in enumerate(collector):
             # print(f'i: {i}')
             # Write data in replay buffer
@@ -226,7 +231,7 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
             rb.extend(data).to(device)
 
             pbar.update(data.numel()) # update the progress bar
-            if len(rb) > init_rand_steps:
+            if len(rb) > init_rand_steps or LOAD:
                 # Optim loop (we do several optim steps
                 # per batch collected for efficiency)
                 avg_loss = torch.empty(0).to(device)
@@ -271,7 +276,7 @@ def train_agent(default_checkpoint_dir=default_checkpoint_dir, save_path=save_pa
                 "Loss": f"{avg_loss:.4f}",
                 "Eps": f"{exploration_module.eps}" 
                 })
-            if i % 100 == 0 and len(rb) > init_rand_steps:
+            if i % 50 == 0 and len(rb) > init_rand_steps:
                 # Save the model every 50 iterations
                 save(policy, optim, total_count, default_checkpoint_dir, save_path)
                     
