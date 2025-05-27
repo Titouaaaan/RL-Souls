@@ -24,12 +24,13 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 params = {
-    "env_name": "SoulsGymIudex-v0",  # Environment name
+    "train_env_name": "SoulsGymIudex-v0",  # Environment name
+    "test_env_name": "SoulsGymIudexDemo-v0",
     "default_checkpoint_dir": "checkpoints",
     "save_path": "dqn_checkpoint_8.pth",
     "LOAD": True,  # Set to True to load the model
-    "training_steps": 8e5,  # Total training steps
-    "init_rand_steps": 2e4,  # Random actions before using the policy
+    "training_steps": 3e6,  # Total training steps
+    "init_rand_steps": 2e1,  # Random actions before using the policy
     "frames_per_batch": 1000,  # Data collection (steps collected per loop)
     "optim_steps": 30,  # Optim steps per batch collected
     "eps_init": 0.995,  # Probability of taking a random action (exploration)
@@ -88,9 +89,12 @@ def compute_custom_reward(game_state: GameState, next_game_state: GameState) -> 
         base_reward = 2 * (0.01 * (d_center_prev - d_center_now) * (d_center_now > 4))
     return (1.2 * boss_reward) + player_reward + (base_reward)
 
-def make_flattened_env(env_name, device, game_speed, random_init, phase):
+def make_flattened_env(env_name, device, game_speed, random_init, phase=None):
     # Step 1: Load SoulsGym environment
-    raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init, phase=phase) #  device=device, ?
+    if phase is not None:
+        raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init, phase=phase) #  device=device, ?
+    else:
+        raw_env = gym.make(env_name, game_speed=game_speed, init_pose_randomization=random_init)
 
     IudexEnv.compute_reward = staticmethod(compute_custom_reward)
 
@@ -116,7 +120,7 @@ def train_agent(phase, default_checkpoint_dir, save_path):
     print(torch.cuda.current_device()) # returns 0 (correct)
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
 
-    env = make_flattened_env(env_name=params["env_name"], device=device, game_speed=3.0, random_init=True, phase=phase)
+    env = make_flattened_env(env_name=params["train_env_name"], device=device, game_speed=3.0, random_init=True, phase=phase)
     #env.set_seed(0)
 
     # Test reset + step
@@ -318,7 +322,7 @@ def test_agent(policy_path, episodes):
     print(f"Using device: {device}")
 
     # Create environment
-    env = make_flattened_env(env_name=params["env_name"], device=device, game_speed=1.0, random_init=False)
+    env = make_flattened_env(env_name=params["test_env_name"], device=device, game_speed=1.0, random_init=False)
 
     num_actions = env.action_spec.shape[0]
     num_obs = env.observation_spec["observation"].shape[0]
@@ -377,5 +381,5 @@ def test_agent(policy_path, episodes):
 if __name__ == "__main__":
     file_path = params["default_checkpoint_dir"] + "/" + params["save_path"]
     #train_agent(phase=1, default_checkpoint_dir=default_checkpoint_dir, save_path=save_path)
-    train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
+    #train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     test_agent(policy_path=file_path, episodes=10)
