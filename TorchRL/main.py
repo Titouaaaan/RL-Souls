@@ -27,15 +27,16 @@ params = {
     "train_env_name": "SoulsGymIudex-v0",  # Environment name
     "test_env_name": "SoulsGymIudexDemo-v0",
     "default_checkpoint_dir": "checkpoints",
-    "save_path": "dqn_checkpoint_8.pth",
+    "load_path": "dqn_checkpoint_8_phase1.pth",  # Path to load the model
+    "save_path": "dqn_checkpoint_8_phase2.pth",
     "LOAD": True,  # Set to True to load the model
-    "training_steps": 3e6,  # Total training steps
-    "init_rand_steps": 2e1,  # Random actions before using the policy
+    "training_steps": 2e6,  # Total training steps
+    "init_rand_steps": 2e4,  # Random actions before using the policy
     "frames_per_batch": 1000,  # Data collection (steps collected per loop)
     "optim_steps": 30,  # Optim steps per batch collected
     "eps_init": 0.995,  # Probability of taking a random action (exploration)
     "eps_end": 0.1,  # Minimum exploration probability
-    "annealing_num_steps_ratio": 0.2,  # Number of steps to decay the exploration probability
+    "annealing_num_steps_ratio": 0.3,  # Number of steps to decay the exploration probability
     "num_cells": [256, 256, 256],  # Hidden layers size for the MLP
     "size_rb": 1_000_000,  # Size of the replay buffer
     "batch_size": 200,  # Batch size for sampling from the replay buffer
@@ -137,7 +138,7 @@ def train_agent(phase, default_checkpoint_dir, save_path):
     load_model = params["LOAD"]  # Load the model if True
     if load_model:
         print(f'Loading checkpoint (policy + optim + step count)...')
-        to_load = default_checkpoint_dir + "/" + save_path
+        to_load = default_checkpoint_dir + "/" + params["load_path"]
         checkpoint = torch.load(to_load, weights_only=False)
 
     # observation --> MLP --> Q-values --> QValueModule --> action
