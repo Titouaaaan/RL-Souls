@@ -24,6 +24,8 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 params = {
+    "phase1_path" : "dqn_checkpoint_8_phase1.pth",  # Path to the phase 1 model
+    "phase2_path" : "dqn_checkpoint_9_phase2.pth",  # Path to the phase 2 model
     "train_env_name": "SoulsGymIudex-v0",  # Environment name
     "test_env_name": "SoulsGymIudexDemo-v0",
     "default_checkpoint_dir": "checkpoints",
@@ -318,18 +320,7 @@ def train_agent(phase, default_checkpoint_dir, save_path):
         print(f"Checkpoint saved at {save_path}.")
         print(f'Training stopped after {total_count} steps in {t1-t0}s.')
 
-def test_agent(policy_path, episodes):
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
-    # Create environment
-    env = make_flattened_env(env_name=params["test_env_name"], device=device, game_speed=1.0, random_init=False)
-
-    num_actions = env.action_spec.shape[0]
-    num_obs = env.observation_spec["observation"].shape[0]
-
-    # Define policy (same structure as in training)
+def make_policy(env, num_cells, num_actions, device):
     num_cells = params["num_cells"]  # hidden layers size for the MLP
     value_mlp = MLP(
         out_features=num_actions,
@@ -347,13 +338,35 @@ def test_agent(policy_path, episodes):
         value_net,
         QValueModule(spec=env.action_spec),
     ).to(device)
+    return policy
 
-    # Load trained weights
-    print(f"Loading policy from {policy_path}")
-    checkpoint = torch.load(policy_path, map_location=device)
-    policy.load_state_dict(checkpoint["model_state_dict"])
+def test_agent(params, episodes):
 
-    policy.eval()  # Set to eval mode
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+    # Create environment
+    env = make_flattened_env(env_name=params["test_env_name"], device=device, game_speed=1.0, random_init=False)
+
+    num_actions = env.action_spec.shape[0]
+    num_obs = env.observation_spec["observation"].shape[0]
+
+    # Define policy (same structure as in training)
+    num_cells = params["num_cells"]  # hidden layers size for the MLP
+    policy_1 = make_policy(env=env, num_cells=num_cells, num_actions=num_actions, device=device)
+    policy_2 = make_policy(env=env, num_cells=num_cells, num_actions=num_actions, device=device)
+
+    # Load trained weights, double check with values in params
+    file1 = params['default_checkpoint_dir'] + "/" + params['phase1_path']
+    file2 = params['default_checkpoint_dir'] + "/" + params['phase2_path']
+    checkpoint_phase1 = torch.load(file1, map_location=device)
+    checkpoint_phase2 = torch.load(file2, map_location=device)
+
+    policy_1.load_state_dict(checkpoint_phase1["model_state_dict"])
+    policy_2.load_state_dict(checkpoint_phase2["model_state_dict"])
+
+    policy_1.eval()  # Set to eval mode
+    policy_2.eval()  # same
     total_rewards = []
 
     for ep in range(episodes):
@@ -363,6 +376,10 @@ def test_agent(policy_path, episodes):
         ep_reward = 0.0
 
         while not (done or terminated):
+            if env.current_phase == 1:
+                policy = policy_1
+            else:
+                policy = policy_2
             with torch.no_grad(), set_exploration_type(ExplorationType.DETERMINISTIC):
                 td = policy(td)
                 td = env.step(td.clone())
@@ -381,7 +398,6 @@ def test_agent(policy_path, episodes):
 
 
 if __name__ == "__main__":
-    file_path = params["default_checkpoint_dir"] + "/" + params["save_path"]
-    train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     #train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
-    test_agent(policy_path=file_path, episodes=10)
+    #train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
+    test_agent(params=params, episodes=10)

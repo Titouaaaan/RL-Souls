@@ -16,9 +16,11 @@ class FlattenObsWrapper(gym.ObservationWrapper):
         obs_sample = self.observation(env.reset()[0])  # first obs from env
         flat_dim = obs_sample.shape[0]
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(flat_dim,), dtype=np.float32)
+        self.current_phase = 1
 
     def observation(self, obs):
         transform = True
+        self.current_phase = obs['phase']
         if transform:
             observation = self.transformer.transform(obs)
             observation = torch.tensor(observation, dtype=torch.float32)
