@@ -24,13 +24,13 @@ from torchrl.data import LazyTensorStorage, ReplayBuffer, ListStorage, TensorDic
 from torchrl.data.replay_buffers.samplers import PrioritizedSampler
 
 params = {
-    "phase1_path" : "dqn_checkpoint_8_phase1.pth",  # Path to the phase 1 model
+    "phase1_path" : "dqn_checkpoint_9_phase1.pth",  # Path to the phase 1 model
     "phase2_path" : "dqn_checkpoint_9_phase2.pth",  # Path to the phase 2 model
     "train_env_name": "SoulsGymIudex-v0",  # Environment name
     "test_env_name": "SoulsGymIudexDemo-v0",
     "default_checkpoint_dir": "checkpoints",
-    "load_path": "dqn_checkpoint_9_phase2.pth",  # Path to load the model
-    "save_path": "dqn_checkpoint_9_phase2.pth",
+    "load_path": "dqn_checkpoint_9_phase1.pth",  # Path to load the model
+    "save_path": "dqn_checkpoint_9_phase1.pth",
     "LOAD": True,  # Set to True to load the model
     "training_steps": 3e6,  # Total training steps
     "init_rand_steps": 2e4,  # Random actions before using the policy
@@ -398,6 +398,6 @@ def test_agent(params, episodes):
 
 
 if __name__ == "__main__":
-    #train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
+    #train_agent(phase=1, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     #train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     test_agent(params=params, episodes=10)
