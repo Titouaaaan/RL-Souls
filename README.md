@@ -8,6 +8,13 @@ I’m working on this project during my gap year between my M1 and M2 at Sorbonn
 
 ---
 
+## First Demo
+This is a short clip of my agent Sir Rollsalot the Untrained, who at this stage has trained for about 50 hours total (phase 1 and 2 combined). Currently gets about 30% win rate as of 05/06/2025 (will be updated once he gets more training time)
+
+https://youtu.be/qfs3fYU9Z3k
+[Watch the demo video](https://www.youtube.com/watch?v=qfs3fYU9Z3k)
+
+
 ## ⚙️ Setup & Requirements
 
 **This project currently only runs on Windows!**
