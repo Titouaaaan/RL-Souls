@@ -1,10 +1,5 @@
 ![Dark Souls III](https://static.bandainamcoent.eu/high/dark-souls/dark-souls-3/00-page-setup/ds3_game-thumbnail.jpg)
 # RL-Souls
-The goal of this project is to use Reinforcement Learning algos to teach an agent how to play Souls games (FromSoftware) like Dark Souls III. 
-Different algorithms will be tested and fine tuned to figure out which methods works best.
-I am working on this project during my gap year between my M1 and M2 at Sorbonne Universite.
-
-# RL-Souls
 
 The goal of this project is to use Reinforcement Learning algorithms to teach an agent how to play Souls games (FromSoftware) like **Dark Souls III**.  
 Different algorithms are tested and fine-tuned to figure out which methods work best.
