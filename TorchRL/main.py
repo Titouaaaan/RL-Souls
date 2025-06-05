@@ -27,11 +27,11 @@ params = {
     "train_env_name": "SoulsGymIudex-v0",  # Environment name
     "test_env_name": "SoulsGymIudexDemo-v0",
     "default_checkpoint_dir": "checkpoints",
-    "load_path": "dqn_checkpoint_8_phase1.pth",  # Path to load the model
-    "save_path": "dqn_checkpoint_9_demo_env.pth",
-    "LOAD": False,  # Set to True to load the model
+    "load_path": "dqn_checkpoint_9_phase2.pth",  # Path to load the model
+    "save_path": "dqn_checkpoint_9_phase2.pth",
+    "LOAD": True,  # Set to True to load the model
     "training_steps": 3e6,  # Total training steps
-    "init_rand_steps": 1e3,  # Random actions before using the policy
+    "init_rand_steps": 2e4,  # Random actions before using the policy
     "frames_per_batch": 1000,  # Data collection (steps collected per loop)
     "optim_steps": 30,  # Optim steps per batch collected
     "eps_init": 0.995,  # Probability of taking a random action (exploration)
@@ -122,7 +122,7 @@ def train_agent(phase, default_checkpoint_dir, save_path):
     print(torch.cuda.get_device_name(torch.cuda.current_device())) # returns cuda:0 if you have one GPU
 
     # make sure you specify the phase (if needed)
-    env = make_flattened_env(env_name=params["test_env_name"], device=device, game_speed=3.0, random_init=True) #, phase=phase
+    env = make_flattened_env(env_name=params["train_env_name"], device=device, game_speed=3.0, random_init=True, phase=phase) # dont forget phase=phase
     #env.set_seed(0)
 
     # Test reset + step
@@ -381,7 +381,7 @@ def test_agent(policy_path, episodes):
 
 
 if __name__ == "__main__":
-    file_path = params["default_checkpoint_dir"] + "/" + params["load_path"]
-    train_agent(phase=1, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
+    file_path = params["default_checkpoint_dir"] + "/" + params["save_path"]
+    train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     #train_agent(phase=2, default_checkpoint_dir=params["default_checkpoint_dir"], save_path=params["save_path"])
     test_agent(policy_path=file_path, episodes=10)
